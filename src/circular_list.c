@@ -5,6 +5,7 @@ typedef struct LIST_NODE_STRUCT
 {
     void* value;
     struct LIST_NODE_STRUCT* next;
+    struct LIST_NODE_STRUCT* previous;
 } LIST_NODE;
 
 typedef struct CIRCULAR_LIST_STRUCT
@@ -29,20 +30,160 @@ CIRCULAR_LIST_HANDLE circular_list_create()
     return result;
 }
 
-void circular_list_destroy(CIRCULAR_LIST_HANDLE list);
+void circular_list_destroy(CIRCULAR_LIST_HANDLE list)
+{
+    if (list == NULL)
+    {
+    }
+    else
+    {
+        if (list->head != NULL)
+        {
+            list->head->previous->next = NULL;
 
-LIST_NODE_HANDLE circular_list_add(CIRCULAR_LIST_HANDLE list, void* value);
+            while (list->head != NULL)
+            {
+                LIST_NODE* node = list->head;
+                list->head = list->head->next;
+                free(node);
+            }
+        }
 
-int circular_list_remove(CIRCULAR_LIST_HANDLE list, LIST_NODE_HANDLE node);
+        free(list);
+    }
+}
+
+LIST_NODE_HANDLE circular_list_add(CIRCULAR_LIST_HANDLE list, void* value)
+{
+    LIST_NODE* result;
+
+    if (list == NULL)
+    {
+        result = NULL;
+    }
+    else if ((result = malloc(sizeof(LIST_NODE))) == NULL)
+    {
+        
+    }
+    else
+    {
+        if (list->head == NULL)
+        {
+            list->head = result;
+            result->next = result;
+            result->previous = result;
+        }
+        else
+        {
+            result->previous = list->head->previous;
+            result->next = list->head;
+            list->head->previous->next = result;
+            list->head->previous = result;
+        }
+    }
+
+    return result;
+}
+
+int circular_list_remove(CIRCULAR_LIST_HANDLE list, LIST_NODE_HANDLE node)
+{
+    int result;
+
+    if (list == NULL || list->head == NULL || node == NULL)
+    {
+        result = 1;
+    }
+    else
+    {
+        if (node->next == node->previous)
+        {
+            list->head = NULL;
+        }
+        else
+        {
+            if (list->head == node)
+            {
+                list->head = node->next;
+            }
+
+            node->previous->next = node->next;
+            node->next->previous = node->previous;
+        }
+        
+        free(node);
+
+        result = 0;
+    }
+    
+    return result;
+}
 
 LIST_NODE_HANDLE circular_list_get_head(CIRCULAR_LIST_HANDLE list)
+{
+    LIST_NODE* result;
+
+    if (list == NULL)
+    {
+        // error handling;
+        result = NULL;
+    }
+    else
+    {
+        result = list->head;
+    }
+
+    return result;
+}
+
+LIST_NODE_HANDLE circular_list_node_get_next(LIST_NODE_HANDLE node)
+{
+    LIST_NODE* result;
+
+    if (node == NULL)
+    {
+        // error handling;
+        result = NULL;
+    }
+    else
+    {
+        result = node->next;
+    }
+
+    return result;
+}
+
+LIST_NODE_HANDLE circular_list_node_get_previous(LIST_NODE_HANDLE node)
+{
+    LIST_NODE* result;
+
+    if (node == NULL)
+    {
+        // error handling;
+        result = NULL;
+    }
+    else
+    {
+        result = node->previous;
+    }
+
+    return result;
+}
+
+void* circular_list_node_get_value(LIST_NODE_HANDLE node)
+{
+    void* result;
+
+    if (node == NULL)
+    {
+        // error handling;
+        result = NULL;
+    }
+    else
+    {
+        result = node->value;
+    }
+
+    return result;
+}
 
 
-LIST_NODE_HANDLE circular_list_node_get_next(LIST_NODE_HANDLE node);
-
-LIST_NODE_HANDLE circular_list_node_get_previous(LIST_NODE_HANDLE node);
-
-void* circular_list_node_get_value(LIST_NODE_HANDLE node);
-
-
-#endif // CIRCULAR_LIST_H
