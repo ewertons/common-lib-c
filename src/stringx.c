@@ -1,4 +1,5 @@
 #include "stringx.h"
+#include <string.h>
 
 int stringx_clone(char** dst, const char* src)
 {
