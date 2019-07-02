@@ -67,6 +67,8 @@ LIST_NODE_HANDLE circular_list_add(CIRCULAR_LIST_HANDLE list, void* value)
     }
     else
     {
+        result->value = value;
+
         if (list->head == NULL)
         {
             list->head = result;
@@ -186,4 +188,89 @@ void* circular_list_node_get_value(LIST_NODE_HANDLE node)
     return result;
 }
 
+int circular_list_foreach(CIRCULAR_LIST_HANDLE list, LIST_ACTION action, void* context)
+{
+    int result;
 
+    if (list == NULL || action == NULL)
+    {
+        result = __LINE__;
+    }
+    else if (list->head == NULL)
+    {
+        result = 0;
+    }
+    else
+    {
+        LIST_NODE* node = list->head;
+        bool continue_processing = true;
+
+        do
+        {
+            action(node, context, &continue_processing);
+
+            node = node->next;
+        } 
+        while (node != list->head && continue_processing);
+
+        result = 0;
+    }
+
+    return result;
+}
+
+int circular_list_remove_if(CIRCULAR_LIST_HANDLE list, REMOVE_CONDITION condition, void* context)
+{
+    int result;
+
+    if (list == NULL || condition == NULL)
+    {
+        result = __LINE__;
+    }
+    else if (list->head == NULL)
+    {
+        result = 0;
+    }
+    else
+    {
+        LIST_NODE* node = list->head;
+        bool continue_processing = true;
+
+        do
+        {
+            if (condition(node, context, &continue_processing))
+            {
+                if (node->next == node)
+                {
+                    free(node);
+                    node = NULL;
+                    list->head = NULL;
+                }
+                else
+                {
+                    LIST_NODE* temp_node = node;
+
+                    node->next->previous = node->previous;
+                    node->previous->next = node->next;
+                    
+                    if (list->head == node)
+                    {
+                        list->head = node->next;
+                    }
+
+                    node = node->next;
+
+                    free(temp_node);
+                }
+            }
+            else
+            {
+                node = node->next;
+            }
+        } while (node != list->head && continue_processing);
+
+        result = 0;
+    }
+
+    return result;
+}
