@@ -20,7 +20,6 @@ static int circular_list_create_test()
 
 static bool remove_item(LIST_NODE_HANDLE node, void* context, bool* continue_processing)
 {
-    bool result;
     int* value = (int*)circular_list_node_get_value(node);
     int* ref = (int*)context;
 
@@ -106,6 +105,54 @@ static int circular_list_remove_if_test()
     return result;
 }
 
+
+static int circular_list_to_array_test()
+{
+    int result;
+    int a = 10, b = 11, c = 12;
+    CIRCULAR_LIST_HANDLE list = circular_list_create();
+    void** array;
+    int array_length;
+
+    circular_list_add(list, &a);
+    circular_list_add(list, &b);
+    circular_list_add(list, &c);
+
+    if (circular_list_to_array(list, &array, &array_length) != 0)
+    {
+        result = 1;
+    }
+    else
+    {
+        if (array_length != 3)
+        {
+            result = 1;
+        }
+        else if (*(int*)array[0] != a)
+        {
+            result = 1;
+        }
+        else if (*(int*)array[1] != b)
+        {
+            result = 1;
+        }
+        else if (*(int*)array[2] != c)
+        {
+            result = 1;
+        }
+        else
+        {
+            result = 0;
+        }
+
+        free(array);
+    }
+
+    circular_list_destroy(list);
+
+    return result;
+}
+
 int main(void)
 {
     int result = 0;
@@ -113,6 +160,7 @@ int main(void)
     result += circular_list_create_test();
     result += circular_list_foreach_test();
     result += circular_list_remove_if_test();
+    result += circular_list_to_array_test();
 
     return result;
 }

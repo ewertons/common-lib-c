@@ -20,5 +20,6 @@ extern LIST_NODE_HANDLE circular_list_node_get_previous(LIST_NODE_HANDLE node);
 extern void* circular_list_node_get_value(LIST_NODE_HANDLE node);
 extern int circular_list_foreach(CIRCULAR_LIST_HANDLE list, LIST_ACTION action, void* context);
 extern int circular_list_remove_if(CIRCULAR_LIST_HANDLE list, REMOVE_CONDITION condition, void* context);
+extern int circular_list_to_array(CIRCULAR_LIST_HANDLE list, void*** array, int* length);
 
 #endif // CIRCULAR_LIST_H

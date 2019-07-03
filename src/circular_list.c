@@ -274,3 +274,59 @@ int circular_list_remove_if(CIRCULAR_LIST_HANDLE list, REMOVE_CONDITION conditio
 
     return result;
 }
+
+int circular_list_to_array(CIRCULAR_LIST_HANDLE list, void*** array, int* length)
+{
+    int result;
+
+    if (list == NULL || array == NULL || length == NULL)
+    {
+        result = __LINE__;
+    }
+    else
+    {
+        LIST_NODE* node = list->head;
+
+        if (node == NULL)
+        {
+            *length = 0;
+            result = 0;
+        }
+        else
+        {
+            int temp_length = 0;
+            void** temp_array;
+
+            do
+            {
+                temp_length++;
+                node = node->next;
+            } while (node != list->head);
+
+            temp_array = malloc(sizeof(void*) * temp_length);
+
+            if (temp_array == NULL)
+            {
+                result = __LINE__;
+            }
+            else
+            {
+                int i = 0;
+
+                do
+                {
+                    temp_array[i] = node->value;
+                    node = node->next;
+                    i++;
+                } while (node != list->head);
+
+                *array = temp_array;
+                *length = temp_length;
+
+                result = 0;
+            }
+        }
+    }
+
+    return result;
+}
