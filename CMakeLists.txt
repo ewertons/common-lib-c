@@ -4,10 +4,12 @@ cmake_minimum_required(VERSION 3.0.2)
 
 set(header_files
     ./inc/circular_list.h
+    ./inc/stringx.h
 )
 
 set(source_files
     ./src/circular_list.c
+    ./src/stringx.c
 )
 
 add_library(common-lib-c ${header_files} ${source_files})
