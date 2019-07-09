@@ -17,5 +17,7 @@ include_directories(./inc)
 target_link_libraries(common-lib-c 
 )
 
+set(COMMON_LIB_C_INC ${CMAKE_CURRENT_LIST_DIR})
+
 add_subdirectory(tests)
 
