@@ -1,6 +1,10 @@
+cmake_minimum_required(VERSION 3.16.0)
+
 project(common-lib-c)
 
-cmake_minimum_required(VERSION 3.0.2)
+find_package(cmocka CONFIG REQUIRED)
+
+enable_testing()
 
 set(header_files
     ./inc/circular_list.h
