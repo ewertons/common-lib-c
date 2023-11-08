@@ -47,20 +47,20 @@ int span_compare(span_t a, span_t b)
     return result;
 }
 
-int span_find(span_t* span, uint32_t start, span_t target, uint32_t* pos)
+int span_find(span_t span, uint32_t start, span_t target, span_t* out_found)
 {
     int result = -1;
 
-    if ((span->length - start) >= target.length)
+    if ((span_get_size(span) - start) >= span_get_size(target))
     {
-        for (uint32_t h = start; h <= (span_get_length(span) - span_get_length(&target)); h++)
+        for (uint32_t h = start; h < (span_get_size(span) - span_get_size(target)); h++)
         {
-            if (span_get(span, h) == span_get(&target, 0))
+            if (span_get(span, h) == span_get(target, 0))
             {
                 uint32_t i;
-                for (i = 1; i < span_get_length(&target); i++)
+                for (i = 1; i < span_get_size(target); i++)
                 {
-                    if (span_get(span, h + i) != span_get(&target, i))
+                    if (span_get(span, h + i) != span_get(target, i))
                     {
                         i = 0;
                         break;
@@ -69,7 +69,7 @@ int span_find(span_t* span, uint32_t start, span_t target, uint32_t* pos)
 
                 if (i > 0)
                 {
-                    *pos = h;
+                    *out_found = span_slice(span, h, span_get_size(target)); 
                     result = 0;
                     break;
                 }
@@ -90,9 +90,9 @@ int span_to_uint32_t(span_t span, uint32_t* value)
     }
     else
     {
-        uint32_t l = span_get_length(&span);
+        uint32_t l = span_get_size(span);
 
-        if (l > 10 || (l == 10 && span_get(&span, 0) > '4'))
+        if (l > 10 || (l == 10 && span_get(span, 0) > '4'))
         {
             result = ERROR;
         }
@@ -102,7 +102,7 @@ int span_to_uint32_t(span_t span, uint32_t* value)
 
             do
             {
-                uint8_t c = span_get(&span, --i);
+                uint8_t c = span_get(span, --i);
 
                 if (!isdigit(c))
                 {

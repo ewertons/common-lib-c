@@ -15,9 +15,10 @@ include_directories(
     ${CMOCKA_PUBLIC_INCLUDE_DIRS}
 )
 
+file(GLOB TEST_SOURCE_FILES ${CMAKE_CURRENT_LIST_DIR}/src/*.c)
+
 add_executable(${TARGET_NAME}
-    ${CMAKE_CURRENT_LIST_DIR}/src/main.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/test_circular_list.c
+    ${TEST_SOURCE_FILES}
 )
 
 target_link_libraries(${TARGET_NAME} common-lib-c cmocka)
