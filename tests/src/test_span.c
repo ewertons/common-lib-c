@@ -128,14 +128,68 @@ static void span_find_success(void** state)
     assert_int_equal(span_get_size(f), 1);
     assert_ptr_equal(span_get_ptr(f), &data[0]);
 
-    assert_int_equal(span_find(s, 1, span_from_str_literal("1"), &f), 0);
+    assert_int_equal(span_find(s, 1, span_from_str_literal("1"), &f), 6);
     assert_int_equal(span_get_size(f), 1);
     assert_ptr_equal(span_get_ptr(f), &data[6]);
 
-    assert_int_equal(span_find(s, 0, span_from_str_literal("43"), &f), 0);
+    assert_int_equal(span_find(s, 0, span_from_str_literal("43"), &f), 3);
     assert_int_equal(span_get_size(f), 2);
     assert_ptr_equal(span_get_ptr(f), &data[3]);
     assert_memory_equal(span_get_ptr(f), "43", 2);
+}
+
+static void span_split_success(void** state)
+{
+    (void)state;
+    uint8_t data[8] = { '1', '2', '3', '4', '3', '2', '1', '0' };
+
+    span_t s = span_from_memory(data);
+    span_t l, r;
+    
+    assert_int_equal(span_split(s, 1, span_from_str_literal("32"), &l, &r), 4);
+    assert_int_equal(span_get_size(l), 3);
+    assert_ptr_equal(span_get_ptr(l), &data[1]);
+    assert_int_equal(span_get_size(r), 2);
+    assert_ptr_equal(span_get_ptr(r), &data[6]);
+
+    assert_int_equal(span_split(s, 0, span_from_str_literal("12"), &l, &r), 0);
+    assert_int_equal(span_get_size(l), 0);
+    assert_ptr_equal(span_get_ptr(l), NULL);
+    assert_int_equal(span_get_size(r), 6);
+    assert_ptr_equal(span_get_ptr(r), &data[2]);
+
+    assert_int_equal(span_split(s, 0, span_from_str_literal("10"), &l, &r), 6);
+    assert_int_equal(span_get_size(l), 6);
+    assert_ptr_equal(span_get_ptr(l), &data[0]);
+    assert_int_equal(span_get_size(r), 0);
+    assert_ptr_equal(span_get_ptr(r), NULL);
+}
+
+static void span_split_failure(void** state)
+{
+    (void)state;
+    uint8_t data[8] = { '1', '2', '3', '4', '3', '2', '1', '0' };
+
+    span_t s = span_from_memory(data);
+    span_t l, r;
+
+    // token not present.    
+    assert_int_equal(span_split(s, 0, span_from_str_literal("999"), &l, &r), -1);
+
+    // Start index less than zero.
+    assert_int_equal(span_split(s, -1, span_from_str_literal("32"), &l, &r), -1);
+
+    // Start index more than size of span and target.
+    assert_int_equal(span_split(s, 7, span_from_str_literal("21"), &l, &r), -1);
+
+    // Target larger than span.
+    assert_int_equal(span_split(s, 0, span_from_str_literal("1234567890"), &l, &r), -1);
+
+    // span is NULL.
+    assert_int_equal(span_split(SPAN_EMPTY, 0, span_from_str_literal("21"), &l, &r), -1);
+
+    // Target is NULL.
+    assert_int_equal(span_split(s, 0, SPAN_EMPTY, &l, &r), -1);
 }
 
 int test_span()
@@ -147,7 +201,9 @@ int test_span()
       cmocka_unit_test(span_slice_success),
       cmocka_unit_test(span_slice_failure),
       cmocka_unit_test(span_slice_to_end_success),
-      cmocka_unit_test(span_find_success)
+      cmocka_unit_test(span_find_success),
+      cmocka_unit_test(span_split_success),
+      cmocka_unit_test(span_split_failure)
   };
 
   return cmocka_run_group_tests_name("span_tests", tests, NULL, NULL);

@@ -46,7 +46,12 @@ static inline uint8_t span_get(span_t s, uint32_t p)
 
 int span_compare(span_t a, span_t b);
 
-int span_find(span_t span, uint32_t start, span_t target, span_t* out_found);
+/**
+* @remarks Finds the position of a span within another span.
+* 
+* @return Zero if found, or -1 if not.
+*/
+int span_find(span_t span, int32_t start, span_t target, span_t* out_found);
 
 static inline span_t span_slice(span_t span, uint32_t start, uint32_t size)
 {
@@ -64,5 +69,7 @@ static inline span_t span_slice_to_end(span_t span, uint32_t start)
 }
 
 int span_to_uint32_t(span_t span, uint32_t* value);
+
+int span_split(span_t span, uint32_t start, span_t delimiter, span_t* left, span_t* right); 
 
 #endif // SPAN_H
