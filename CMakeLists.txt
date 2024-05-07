@@ -16,6 +16,8 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/span.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
 )
 
 add_library(common-lib-c ${header_files} ${source_files})

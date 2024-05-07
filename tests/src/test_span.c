@@ -5,7 +5,7 @@
 #include <cmocka.h>
 
 #include "span.h"
-#include "test_span.h"
+#include "tests.h"
 
 static void span_init_success(void** state)
 {

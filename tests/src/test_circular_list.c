@@ -5,7 +5,7 @@
 #include <cmocka.h>
 
 #include "circular_list.h"
-#include "test_circular_list.h"
+#include "tests.h"
 
 static void circular_list_create_success(void** state)
 {

@@ -17,6 +17,8 @@ include_directories(
 
 file(GLOB TEST_SOURCE_FILES ${CMAKE_CURRENT_LIST_DIR}/src/*.c)
 
+message(STATUS TEST_SOURCE_FILES=${TEST_SOURCE_FILES})
+
 add_executable(${TARGET_NAME}
     ${TEST_SOURCE_FILES}
 )

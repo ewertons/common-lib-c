@@ -7,15 +7,16 @@
 
 #include <cmocka.h>
 
-#include <test_circular_list.h>
-#include <test_span.h>
+#include <tests.h>
 
 int main()
 {
   int result = 0;
 
-  result += test_circular_list();
   result += test_span();
+  result += test_circular_list();
+  result += test_bst_redblack();
+  result += test_stack();
 
   return result;
 }
