@@ -17,6 +17,7 @@ int main()
   result += test_circular_list();
   result += test_bst_redblack();
   result += test_stack();
+  result += test_list();
 
   return result;
 }

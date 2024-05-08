@@ -5,5 +5,6 @@ int test_span();
 int test_circular_list();
 int test_bst_redblack();
 int test_stack();
+int test_list();
 
 #endif // TESTS_H

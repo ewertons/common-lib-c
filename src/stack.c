@@ -13,6 +13,18 @@ void stack_init(stack_t* stack, size_t value_size_in_bytes, int initial_size)
     }
 }
 
+void stack_deinit(stack_t* stack)
+{
+    if (stack != NULL)
+    {
+        free(stack->values);
+        stack->values = NULL;
+        stack->size = 0;
+        stack->count = 0;
+        stack->value_size = 0;
+    }
+}
+
 int stack_push(stack_t* stack, void* value)
 {
     if (stack == NULL)

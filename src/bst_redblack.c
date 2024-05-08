@@ -2,6 +2,7 @@
 
 #include "bst_redblack.h"
 #include "stack.h"
+#include "list.h"
 #include "niceties.h"
 
 static bst_rb_node_t* node_create(int value)
@@ -122,6 +123,8 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                     break;
                 }
             }
+
+            stack_deinit(&stack);
         }
         else if (order == bst_search_order_dfs_in_order)
         {
@@ -157,6 +160,8 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                     break;
                 }
             }
+
+            stack_deinit(&stack);
         }
         else if (order == bst_search_order_dfs_post_order)
         {
@@ -171,7 +176,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                 {
                     if (stack_push(&stack, &root) != OK)
                     {
-                        return;
+                        break;
                     }
 
                     root = root->left;
@@ -182,7 +187,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
 
                     if (stack_top(&stack, &current_node) != OK)
                     {
-                        return;
+                        break;
                     }
 
                     if (current_node->right != NULL && current_node->right != previous_node)
@@ -196,7 +201,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
 
                         if (stack_pop(&stack, NULL) != OK)
                         {
-                            return;
+                            break;
                         }
                     }
                 }
@@ -205,11 +210,63 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                     break;
                 }
             }
+
+            stack_deinit(&stack);
         }
         else // if (order == bst_search_order_bfs)
         {
+            list_t list;
+            list_init(&list, sizeof(bst_rb_node_t*));
 
+            if (list_add(&list, &root) != NULL)
+            {
+                while (!list_is_empty(&list))
+                {
+                    bst_rb_node_t* tree_node;
+                    list_node_t* list_head = list_get_head(&list);
+
+                    if (list_node_get_data(&list, list_head, &tree_node) != 0)
+                    {
+                        break;
+                    }
+
+                    callback(tree_node, context);
+
+                    if (tree_node->left != NULL)
+                    {
+                        if (list_add(&list, &(tree_node->left)) == NULL)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (tree_node->right != NULL)
+                    {
+                        if (list_add(&list, &(tree_node->right)) == NULL)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (list_remove(&list, list_head) != 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            list_deinit(&list);
         }
     }
 }
 
+static void traverse_and_destroy_tree(bst_rb_node_t* node, void* context)
+{
+    (void)context;
+    free(node);
+}
+
+void bst_rb_destroy(bst_rb_node_t* root)
+{
+    bst_rb_traverse(root, bst_search_order_dfs_post_order, traverse_and_destroy_tree, NULL);
+}

@@ -30,6 +30,8 @@ static void stack_push_pop_success(void** state)
       assert_int_equal(i, stack_get_count(&stack));
       assert_int_equal(10, stack_get_size(&stack));
     }
+
+    stack_deinit(&stack);
 }
 
 int test_stack()

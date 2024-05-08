@@ -13,6 +13,7 @@ typedef struct stack
 } stack_t;
 
 void stack_init(stack_t* stack, size_t value_size_in_bytes, int initial_size);
+void stack_deinit(stack_t* stack);
 int stack_push(stack_t* stack, void* value);
 int stack_pop(stack_t* stack, void* value);
 int stack_top(stack_t* stack, void* value);

@@ -31,4 +31,6 @@ int bst_rb_node_get_value(bst_rb_node_t* node, int* value);
 
 void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_traverse_callback_t callback, void* context);
 
+void bst_rb_destroy(bst_rb_node_t* root);
+
 #endif // BST_REDBLACK

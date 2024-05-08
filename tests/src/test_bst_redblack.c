@@ -51,6 +51,8 @@ static void bst_rb_add_success(void** state)
 
     (void)bst_rb_traverse(root, bst_search_order_dfs_pre_order, print_tree_node, NULL);
     printf("\n");
+
+    bst_rb_destroy(root);
 }
 
 static void bst_rb_add_multiple_success(void** state)
@@ -80,6 +82,8 @@ static void bst_rb_add_multiple_success(void** state)
 
     (void)bst_rb_traverse(root, bst_search_order_dfs_pre_order, print_tree_node, NULL);
     printf("\n");
+
+    bst_rb_destroy(root);
 }
 
 static void bst_rb_traverse_in_order_success(void** state)
@@ -109,6 +113,8 @@ static void bst_rb_traverse_in_order_success(void** state)
     (void)bst_rb_traverse(root, bst_search_order_dfs_in_order, store_values_in_test_set, &value_set);
     assert_int_equal(value_set.count, sizeofarray(values_in_order));
     assert_memory_equal(value_set.values, values_in_order, sizeofarray(values_in_order));
+
+    bst_rb_destroy(root);
 }
 
 static void bst_rb_traverse_post_order_success(void** state)
@@ -138,6 +144,39 @@ static void bst_rb_traverse_post_order_success(void** state)
     (void)bst_rb_traverse(root, bst_search_order_dfs_post_order, store_values_in_test_set, &value_set);
     assert_int_equal(value_set.count, sizeofarray(values_post_order));
     assert_memory_equal(value_set.values, values_post_order, sizeofarray(values_post_order));
+
+    bst_rb_destroy(root);
+}
+
+static void bst_rb_traverse_bfs_success(void** state)
+{
+    (void)state;
+    int values[] = { 10, 5, 111, 21, -1, 8, 88, 50, 31, -2, 71, 66, 13 };
+    int values_breadth[] = { 10, 5, 111, -1, 8, 21, -2, 13, 88, 50, 31, 71, 66 };
+    bst_rb_node_t* root = NULL;
+
+    for (int i = 0; i < sizeofarray(values); i++)
+    {
+        if (root == NULL)
+        {
+            root = bst_rb_add(NULL, 10);
+            assert_non_null(root);
+        }
+        else
+        {
+            assert_non_null(bst_rb_add(root, values[i]));
+        }
+    }
+
+    (void)bst_rb_traverse(root, bst_search_order_bfs, print_tree_node, NULL);
+    printf("\n");
+
+    test_value_set_t value_set = { 0 };
+    (void)bst_rb_traverse(root, bst_search_order_bfs, store_values_in_test_set, &value_set);
+    assert_int_equal(value_set.count, sizeofarray(values_breadth));
+    assert_memory_equal(value_set.values, values_breadth, sizeofarray(values_breadth));
+
+    bst_rb_destroy(root);
 }
 
 int test_bst_redblack()
@@ -147,6 +186,7 @@ int test_bst_redblack()
       cmocka_unit_test(bst_rb_add_multiple_success),
       cmocka_unit_test(bst_rb_traverse_in_order_success),
       cmocka_unit_test(bst_rb_traverse_post_order_success),
+      cmocka_unit_test(bst_rb_traverse_bfs_success),
   };
 
   return cmocka_run_group_tests_name("bst_redblack_tests", tests, NULL, NULL);
