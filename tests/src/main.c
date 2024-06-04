@@ -18,6 +18,7 @@ int main()
   result += test_bst_redblack();
   result += test_stack();
   result += test_list();
+  result += test_base64();
 
   return result;
 }

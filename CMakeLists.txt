@@ -10,9 +10,11 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/base64.h
 )
 
 set(source_files
+    ${CMAKE_CURRENT_LIST_DIR}/src/base64.c
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/span.c
