@@ -72,4 +72,20 @@ int span_to_uint32_t(span_t span, uint32_t* value);
 
 int span_split(span_t span, uint32_t start, span_t delimiter, span_t* left, span_t* right); 
 
+static inline span_t span_grab(span_t from, uint32_t size, span_t* out_remainder)
+{
+    span_t result = span_slice(from, 0, size);
+
+    if (out_remainder != NULL)
+    {
+        *out_remainder = span_slice_to_end(from, size);
+    }
+
+    return result;
+}
+
+span_t span_copy(span_t to, span_t from, span_t* remainder);
+
+span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_size, span_t* remainder);
+
 #endif // SPAN_H

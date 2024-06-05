@@ -7,5 +7,6 @@ int test_bst_redblack();
 int test_stack();
 int test_list();
 int test_base64();
+int test_sha256();
 
 #endif // TESTS_H

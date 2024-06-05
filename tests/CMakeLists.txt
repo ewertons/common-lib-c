@@ -23,6 +23,6 @@ add_executable(${TARGET_NAME}
     ${TEST_SOURCE_FILES}
 )
 
-target_link_libraries(${TARGET_NAME} common-lib-c cmocka)
+target_link_libraries(${TARGET_NAME} common-lib-c cmocka ssl crypto)
 
 add_test(${TARGET_NAME} ${TARGET_NAME})

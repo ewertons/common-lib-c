@@ -1,4 +1,5 @@
 #include <span.h>
+#include <string.h>
 
 #define isdigit(x) (x >= '0' && x <= '9')
 
@@ -134,4 +135,58 @@ int span_to_uint32_t(span_t span, uint32_t* value)
 
 SPAN_TO_UINT32_T_FUNCTION_RETURN:
     return result;
+}
+
+span_t span_copy(span_t to, span_t from, span_t* remainder)
+{
+    if (span_get_size(to) == 0 || span_get_size(to) < span_get_size(from))
+    {
+        return SPAN_EMPTY;
+    }
+
+    (void)memcpy(span_get_ptr(to), span_get_ptr(from), span_get_size(from));
+
+    if (remainder != NULL)
+    {
+        *remainder = span_slice_to_end(to, span_get_size(from));
+    }
+
+    return span_slice(to, 0, span_get_size(from));
+}
+
+span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_size, span_t* remainder)
+{
+    if (from == NULL || count < 1)
+    {
+        return SPAN_EMPTY;
+    }
+
+    int32_t total_size = 0;
+    for (int i = 0; i < count; i++)
+    {
+        total_size += span_get_size(from[i]);
+    }
+
+    if (required_size != NULL)
+    {
+        *required_size = total_size;
+    }
+
+    if (span_get_size(to) < total_size)
+    {
+        return SPAN_EMPTY;
+    }
+
+    span_t to_remainder = to;
+    for (int i = 0; i < count; i++)
+    {
+        (void)span_copy(to_remainder, from[i], &to_remainder);
+    }
+
+    if (remainder != NULL)
+    {
+        *remainder = to_remainder;
+    }
+
+    return span_slice(to, 0, total_size);
 }

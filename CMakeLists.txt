@@ -11,6 +11,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/base64.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/sha256.h
 )
 
 set(source_files
@@ -21,6 +22,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/sha256.c
 )
 
 add_library(common-lib-c ${header_files} ${source_files})
