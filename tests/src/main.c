@@ -19,7 +19,7 @@ int main()
   result += test_stack();
   result += test_list();
   result += test_base64();
-  result += test_sha256();
+  result += test_hmac_sha256();
 
   return result;
 }

@@ -1,10 +1,8 @@
-#include "sha256.h"
+#include "hmac_sha256.h"
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
-
-#include <openssl/evp.h>
 
 void sha_hash_to_hex_string(span_t hash, span_t string, span_t* out_string)
 {
@@ -21,7 +19,7 @@ void sha_hash_to_hex_string(span_t hash, span_t string, span_t* out_string)
     *out_string = span_slice(string, 0, i * 2); // do not comput \0 in size.
 }
 
-int sha256_get_hash(span_t key, span_t data, span_t hash, span_t* out_hash)
+int hmac_sha256_get_hash(span_t key, span_t data, span_t hash, span_t* out_hash)
 {
     int result;
     unsigned int hash_length;

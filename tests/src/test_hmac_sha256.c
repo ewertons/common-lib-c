@@ -4,13 +4,13 @@
 #include <setjmp.h>
 #include <cmocka.h>
 
-#include "sha256.h"
+#include "hmac_sha256.h"
 
 static uint8_t buffer_raw[1024];
 
 // Reference: https://datatracker.ietf.org/doc/html/rfc4231#page-4
 
-static void sha256_get_hash_rfc4231_test_case_1_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_1_success(void** state)
 {
     (void)state;
 
@@ -23,12 +23,12 @@ static void sha256_get_hash_rfc4231_test_case_1_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_2_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_2_success(void** state)
 {
     (void)state;
 
@@ -41,12 +41,12 @@ static void sha256_get_hash_rfc4231_test_case_2_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_3_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_3_success(void** state)
 {
     (void)state;
 
@@ -59,12 +59,12 @@ static void sha256_get_hash_rfc4231_test_case_3_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_4_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_4_success(void** state)
 {
     (void)state;
 
@@ -77,12 +77,12 @@ static void sha256_get_hash_rfc4231_test_case_4_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_5_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_5_success(void** state)
 {
     (void)state;
 
@@ -95,12 +95,12 @@ static void sha256_get_hash_rfc4231_test_case_5_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_6_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_6_success(void** state)
 {
     (void)state;
 
@@ -113,12 +113,12 @@ static void sha256_get_hash_rfc4231_test_case_6_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_rfc4231_test_case_7_success(void** state)
+static void hmac_sha256_get_hash_rfc4231_test_case_7_success(void** state)
 {
     (void)state;
 
@@ -131,12 +131,12 @@ static void sha256_get_hash_rfc4231_test_case_7_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-static void sha256_get_hash_random_test_1_success(void** state)
+static void hmac_sha256_get_hash_random_test_1_success(void** state)
 {
     (void)state;
 
@@ -149,23 +149,23 @@ static void sha256_get_hash_random_test_1_success(void** state)
     span_t data = span_from_memory(data_raw);;
     span_t hash;
 
-    assert_int_equal(0, sha256_get_hash(key, data, buffer, &hash));
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buffer, &hash));
     assert_int_equal(32, span_get_size(hash));
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
-int test_sha256()
+int test_hmac_sha256()
 {
   const struct CMUnitTest tests[] = {
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_1_success),
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_2_success),
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_3_success),
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_4_success),
-      // cmocka_unit_test(sha256_get_hash_rfc4231_test_case_5_success), // needs debugging.
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_6_success),
-      cmocka_unit_test(sha256_get_hash_rfc4231_test_case_7_success),
-      cmocka_unit_test(sha256_get_hash_random_test_1_success)
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_1_success),
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_2_success),
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_3_success),
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_4_success),
+      // cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_5_success), // needs debugging.
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_6_success),
+      cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_7_success),
+      cmocka_unit_test(hmac_sha256_get_hash_random_test_1_success)
   };
 
-  return cmocka_run_group_tests_name("sha256_tests", tests, NULL, NULL);
+  return cmocka_run_group_tests_name("hmac_sha256_tests", tests, NULL, NULL);
 }
