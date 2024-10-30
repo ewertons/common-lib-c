@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.16.0)
 project(common-lib-c)
 
 find_package(cmocka CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 enable_testing()
 
@@ -23,6 +24,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/hmac_sha256.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
 )
 
 add_library(common-lib-c ${header_files} ${source_files})
@@ -33,6 +35,11 @@ target_include_directories (common-lib-c
   PUBLIC
   $<BUILD_INTERFACE:${COMMON_LIB_C_INC_DIR}>
   $<INSTALL_INTERFACE:include/common-lib-c>
+)
+
+target_link_libraries(
+    common-lib-c
+      ${OPENSSL_LIBRARIES}
 )
 
 add_subdirectory(tests)
