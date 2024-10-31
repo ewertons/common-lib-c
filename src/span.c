@@ -1,5 +1,6 @@
-#include <span.h>
 #include <string.h>
+
+#include <span.h>
 
 #define isdigit(x) (x >= '0' && x <= '9')
 
@@ -48,7 +49,7 @@ int span_compare(span_t a, span_t b)
     return result;
 }
 
-int span_find(span_t span, int32_t start, span_t target, span_t* out_found)
+int span_find(span_t span, int32_t start, span_t target, span_t* out_remainder)
 {
     int result = -1;
 
@@ -70,7 +71,7 @@ int span_find(span_t span, int32_t start, span_t target, span_t* out_found)
 
                 if (i > 0)
                 {
-                    *out_found = span_slice(span, h, span_get_size(target)); 
+                    *out_remainder = span_slice_to_end(span, h + span_get_size(target)); 
                     result = h;
                     break;
                 }
@@ -81,14 +82,63 @@ int span_find(span_t span, int32_t start, span_t target, span_t* out_found)
     return result;
 }
 
+result_t span_iterate(span_t span, span_t delimiter, span_t* out_item, span_t* remainder)
+{
+    result_t result;
+
+    if (span_is_empty(delimiter) || out_item == NULL || remainder == NULL)
+    {
+        result = invalid_argument;
+    }
+    else if (span_is_empty(span))
+    {
+        result = end_of_data;
+    }
+    else
+    {
+        span_t find_remainder;
+        int position = span_find(span, 0, delimiter, &find_remainder);
+
+        if (position == -1)
+        {
+            *out_item = span;
+            *remainder = SPAN_EMPTY;
+            result = ok;
+        }
+        else
+        {
+            *out_item = span_slice(span, 0, position);
+            *remainder = find_remainder;
+            result = ok;
+        }
+    }
+
+    return result;
+}
+
 int span_split(span_t span, uint32_t start, span_t delimiter, span_t* left, span_t* right)
 {
-    int result = span_find(span, start, delimiter, &delimiter);
+    int result;
+    span_t remainder;
+    int position = span_find(span, start, delimiter, &remainder);
 
-    if (result != -1)
+    if (position == -1)
     {
-        *left = span_slice(span, start, result - start);
-        *right = span_slice_to_end(span, result + span_get_size(delimiter));
+        result = ERROR;
+    }
+    else
+    {
+        if (left != NULL)
+        {
+            *left = span_slice(span, start, position - start);
+        }
+
+        if (right != NULL)
+        {
+            *right = remainder;
+        }
+
+        result = OK;
     }
 
     return result;
