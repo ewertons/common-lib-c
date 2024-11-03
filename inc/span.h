@@ -15,6 +15,11 @@ typedef struct span
 #define SPAN_EMPTY \
   (span_t){ .ptr = (uint8_t*)NULL, .length = 0 }
 
+#define null_terminator_char '\0'
+
+#define span_is_null_terminated(s) \
+    (span_get(s, span_get_size(s) - 1) == null_terminator_char)
+
 static inline uint8_t* span_get_ptr(span_t s)
 {
     return s.ptr;
@@ -138,5 +143,7 @@ static inline span_t span_grab(span_t from, uint32_t size, span_t* out_remainder
 span_t span_copy(span_t to, span_t from, span_t* remainder);
 
 span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_size, span_t* remainder);
+
+result_t span_regex_is_match(span_t string, span_t pattern, span_t* matches, uint16_t size_of_matches, uint16_t* number_of_matches);
 
 #endif // SPAN_H

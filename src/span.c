@@ -2,7 +2,12 @@
 
 #include <span.h>
 
+#include <regex.h>
+
 #define isdigit(x) (x >= '0' && x <= '9')
+
+#define REGMATCH_ARRAY_MAX_SIZE 10
+
 
 int span_compare(span_t a, span_t b)
 {
@@ -239,4 +244,60 @@ span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_siz
     }
 
     return span_slice(to, 0, total_size);
+}
+
+result_t span_regex_is_match(span_t string, span_t pattern, span_t* matches, uint16_t size_of_matches, uint16_t* number_of_matches)
+{
+    result_t result;
+
+    if (span_is_empty(string) || span_is_empty(pattern) || 
+        matches == NULL && (size_of_matches > 0 || number_of_matches != NULL) ||
+        matches != NULL && (size_of_matches == 0 || size_of_matches > REGMATCH_ARRAY_MAX_SIZE || number_of_matches == NULL))
+    {
+        result = invalid_argument;
+    }
+    else if (!span_is_null_terminated(string) || !span_is_null_terminated(pattern))
+    {
+        result = invalid_argument;
+    }
+    else
+    {
+        regex_t regex;
+        regoff_t off, len;
+
+        if (regcomp(&regex, span_get_ptr(pattern), REG_EXTENDED))
+        {
+            result = error;
+        }
+        else
+        {
+            regmatch_t pmatches[REGMATCH_ARRAY_MAX_SIZE];
+
+            if (regexec(&regex, span_get_ptr(string), sizeofarray(pmatches), pmatches, 0))
+            {
+                result = not_found;
+            }
+            else
+            {
+                if (size_of_matches > 0)
+                {
+                    *number_of_matches = 0;
+
+                    for (int i = 0; i < size_of_matches && i < REGMATCH_ARRAY_MAX_SIZE; i++)
+                    {
+                        if (pmatches[i].rm_so == -1) break;
+
+                        matches[i] = span_slice(string, pmatches[i].rm_so, pmatches[i].rm_eo - pmatches[i].rm_so);
+                        (*number_of_matches)++;
+                    }
+                }
+
+                result = ok;
+            }
+
+            regfree(&regex);
+        }
+    }
+
+    return result;
 }
