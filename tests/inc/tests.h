@@ -8,5 +8,6 @@ int test_stack();
 int test_list();
 int test_base64();
 int test_hmac_sha256();
+int test_task();
 
 #endif // TESTS_H

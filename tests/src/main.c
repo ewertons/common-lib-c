@@ -8,6 +8,8 @@
 #include <cmocka.h>
 
 #include <tests.h>
+#include "task.h"
+
 
 int main()
 {
@@ -20,6 +22,10 @@ int main()
   result += test_list();
   result += test_base64();
   result += test_hmac_sha256();
+  
+  task_platform_init();
+  result += test_task();
+  task_platform_deinit();
 
   return result;
 }

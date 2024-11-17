@@ -25,6 +25,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/hmac_sha256.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/task.c
 )
 
 add_library(common-lib-c ${header_files} ${source_files})
