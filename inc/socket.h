@@ -3,10 +3,11 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+
 #include "span.h"
+#include "niceties.h"
 
 #include <arpa/inet.h>
-
 #include <sys/socket.h>
 #include <openssl/ssl.h>
 
@@ -48,9 +49,9 @@ static inline socket_config_t socket_get_default_secure_listener_config()
     return config;
 }
 
-int socket_init(socket_t* socket, socket_config_t* config);
-int socket_accept(socket_t* server, socket_t* client);
-int socket_read(socket_t* ssl1, span_t buffer, span_t* out_read);
-int socket_write(socket_t* ssl1, span_t data);
+result_t socket_init(socket_t* socket, socket_config_t* config);
+result_t socket_accept(socket_t* server, socket_t* client);
+result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read);
+result_t socket_write(socket_t* ssl1, span_t data);
 
 #endif // SOCKET_H

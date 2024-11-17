@@ -28,9 +28,9 @@ static void socket_error(SSL *ssl, int err) {
 }
 
 
-int socket_init(socket_t* ssl1, socket_config_t* config)
+result_t socket_init(socket_t* ssl1, socket_config_t* config)
 {
-  int result = OK;
+  result_t result;
 
   if (!is_socket_library_initialized)
   {
@@ -44,14 +44,14 @@ int socket_init(socket_t* ssl1, socket_config_t* config)
     const SSL_METHOD *meth = SSLv23_server_method();
     ssl1->ctx = SSL_CTX_new(meth);
     if (ssl1->ctx == NULL) {
-        result = ERROR;
+        result = error;
     }
 
   if (config->tls.certificate_file)
   {
     if (SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0) {
         printf("Error: Valid server certificate not found in %s\n", config->tls.certificate_file);
-        result = ERROR;
+        result = error;
       }
   }
 
@@ -59,17 +59,17 @@ int socket_init(socket_t* ssl1, socket_config_t* config)
   {
     if (SSL_CTX_use_PrivateKey_file(ssl1->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0) {
       printf("Error: Valid server private key not found in %s\n", config->tls.private_key_file);
-      result = ERROR;
+      result = error;
     }
   }
 
   if (!SSL_CTX_check_private_key(ssl1->ctx)) {
     printf("Error: Private key does not match the certificate public key\n");
-    result = ERROR;
+    result = error;
   }
 
   ssl1->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
-  if (ssl1->listen_sd == -1) result = ERROR;
+  if (ssl1->listen_sd == -1) result = error;
   
   memset(&ssl1->sa_serv, '\0', sizeof(ssl1->sa_serv));
   ssl1->sa_serv.sin_family      = AF_INET;
@@ -79,28 +79,32 @@ int socket_init(socket_t* ssl1, socket_config_t* config)
   err = bind(ssl1->listen_sd, (struct sockaddr*) &ssl1->sa_serv, sizeof (ssl1->sa_serv));
   if (err == -1) {
     printf("Error: Could not bind to port %d (%s)\n", config->local.port, strerror(errno));
-    result = ERROR;
+    result = error;
   }
 	     
   err = listen(ssl1->listen_sd, 5);
   if (err == -1) {
     printf("Error: listen() (%s)\n", strerror(errno));
-    result = ERROR;
+    result = error;
+  }
+  else
+  {
+    result = ok;
   }
 
   return result;
 }
 
-int socket_accept(socket_t* server, socket_t* client)
+result_t socket_accept(socket_t* server, socket_t* client)
 {
-  int result = OK;
+  result_t result = ok;
   int err;
 
   client->client_len = sizeof(client->sa_cli);
   client->sd = accept(server->listen_sd, (struct sockaddr*)&client->sa_cli, &client->client_len);
   if (client->sd == -1) {
     printf("Error: accept() (%s)\n", strerror(errno));
-    result = ERROR;
+    result = error;
   }
   //close(ssl1->listen_sd);
 
@@ -118,7 +122,7 @@ int socket_accept(socket_t* server, socket_t* client)
   err = SSL_accept(client->ssl);
   if (err != 1) {
     socket_error(client->ssl, err);
-    result = ERROR;
+    result = error;
   }
   else
   {
@@ -147,18 +151,20 @@ int socket_accept(socket_t* server, socket_t* client)
     } else {
       printf ("Client does not have certificate.\n");
     }
+
+    result = ok;
   }
 
   return result;
 }
 
-int socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
+result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
 {
-    int result;
+    result_t result;
 
     if (ssl1 == NULL)
     {
-        result = ERROR;
+        result = invalid_argument;
     }
     else
     {
@@ -169,7 +175,7 @@ int socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
         if (bytes_read > 0)
         {
             *out_read = span_slice(buffer, 0, bytes_read);
-            result = OK;
+            result = ok;
         }
         else
         {
@@ -180,10 +186,10 @@ int socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
                 case SSL_ERROR_ZERO_RETURN:
                 case SSL_ERROR_SYSCALL:
                 case SSL_ERROR_SSL:
-                    result = ERROR;
+                    result = error;
                     break;
                 default:
-                    result = OK;
+                    result = ok;
                     break;
             };
         }
@@ -192,17 +198,17 @@ int socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
     return result;
 }
 
-int socket_write(socket_t* ssl1, span_t data)
+result_t socket_write(socket_t* ssl1, span_t data)
 {
-    int result;
+    result_t result;
 
     if (ssl1 == NULL)
     {
-        result = ERROR;
+        result = invalid_argument;
     }
     else
     {
-        result = OK;
+        result = ok;
 
         while (span_get_size(data) > 0)
         {
@@ -210,7 +216,7 @@ int socket_write(socket_t* ssl1, span_t data)
 
             if (n <= 0)
             {
-                result = ERROR;
+                result = error;
                 break;
             }
             else
