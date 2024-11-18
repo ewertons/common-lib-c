@@ -13,7 +13,7 @@
 
 
 
-static void counter_add_1_async(void* user_args, task_t* my_task)
+static result_t counter_add_1_async(void* user_args, task_t* my_task)
 {
   int* counter = (int*)user_args;
 
@@ -23,9 +23,11 @@ static void counter_add_1_async(void* user_args, task_t* my_task)
     (*counter)++;
     (void)task_unlock(my_task);
   }
+
+  return ok;
 }
 
-static void keep_running_async(void* user_args, task_t* my_task)
+static result_t keep_running_async(void* user_args, task_t* my_task)
 {
   bool* is_cancelled = (bool*)user_args;
 
@@ -37,6 +39,8 @@ static void keep_running_async(void* user_args, task_t* my_task)
   task_lock(my_task);
   *is_cancelled = true;
   task_unlock(my_task);
+
+  return ok;
 }
 
 static void task_run_success(void** state)

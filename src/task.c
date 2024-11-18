@@ -54,7 +54,7 @@ static void* inner_thread_function(void* args)
 {
     task_t* task = (task_t*)args;
     
-    task->function(task->user_args, task);
+    task->result = task->function(task->user_args, task);
   
     pthread_exit(NULL); 
 }

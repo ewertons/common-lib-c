@@ -3,12 +3,14 @@
 
 #include <stdbool.h>
 
+#include "niceties.h"
+
 #include "pthread.h"
 #include "semaphore.h"
 
 struct task;
 
-typedef void (*task_function_t)(void* user_args, struct task* my_task);
+typedef result_t (*task_function_t)(void* user_args, struct task* my_task);
 
 typedef struct task
 {
@@ -18,6 +20,7 @@ typedef struct task
     task_function_t function;
     void* user_args;
     sem_t semaphore;
+    result_t result;
 } task_t;
 
 #define task_lock(t) sem_wait(&t->semaphore)

@@ -25,6 +25,7 @@ typedef enum result
     end_of_data =       make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x05),
     end_of_file =       make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x06),
     try_again =         make_result(C_UTILS, is_error_result,   is_retryable_error,     0x10),
+    completed_successfully =         make_result(C_UTILS, is_success_result,   is_retryable_error,     0x20),
     error =             make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0xFF)
 } result_t;
 
