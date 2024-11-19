@@ -50,7 +50,9 @@ static inline socket_config_t socket_get_default_secure_listener_config()
 }
 
 result_t socket_init(socket_t* socket, socket_config_t* config);
+result_t socket_deinit(socket_t* socket);
 result_t socket_accept(socket_t* server, socket_t* client);
+result_t socket_connect(socket_t* client);
 result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read);
 result_t socket_write(socket_t* ssl1, span_t data);
 

@@ -27,7 +27,6 @@ static void socket_error(SSL *ssl, int err) {
   }
 }
 
-
 result_t socket_init(socket_t* ssl1, socket_config_t* config)
 {
   result_t result;
@@ -95,6 +94,47 @@ result_t socket_init(socket_t* ssl1, socket_config_t* config)
   return result;
 }
 
+result_t socket_deinit(socket_t* socket)
+{
+  result_t result;
+
+  if (socket == NULL)
+  {
+    result = invalid_argument;
+  }
+  else
+  {
+    if (socket->listen_sd != -1)
+    {
+      close(socket->listen_sd);
+      socket->listen_sd = -1;
+    }
+
+    if (socket->sd != -1)
+    {
+      close(socket->sd);
+      socket->sd = -1;
+    }
+
+    if (socket->ssl != NULL)
+    {
+      SSL_free(socket->ssl);
+      socket->ssl = NULL;
+    }
+
+    if (socket->ctx != NULL)
+    {
+      SSL_CTX_free(socket->ctx);
+      socket->ctx = NULL;
+    }
+
+    result = ok;
+  }
+
+  return result;
+}
+
+
 result_t socket_accept(socket_t* server, socket_t* client)
 {
   result_t result = ok;
@@ -157,6 +197,22 @@ result_t socket_accept(socket_t* server, socket_t* client)
 
   return result;
 }
+
+result_t socket_connect(socket_t* client)
+{
+  result_t result;
+
+  if (client == NULL)
+  {
+    result = invalid_argument;
+  }
+  else
+  {
+    
+    result = ok;
+  }
+}
+
 
 result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
 {
