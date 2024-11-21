@@ -8,6 +8,22 @@
 
 #define REGMATCH_ARRAY_MAX_SIZE 10
 
+int span_set(span_t span, uint32_t position, uint8_t value)
+{
+    int result;
+
+    if (span_is_empty(span) || position >= span_get_size(span))
+    {
+        result = ERROR;
+    }
+    else
+    {
+        span.ptr[position] = value;
+        result = OK;
+    }
+
+    return result;
+}
 
 int span_compare(span_t a, span_t b)
 {
@@ -192,6 +208,64 @@ SPAN_TO_UINT32_T_FUNCTION_RETURN:
     return result;
 }
 
+span_t span_from_int32(span_t span, int32_t value, span_t* out_span)
+{
+    span_t result;
+
+    if (span_is_empty(span) || out_span == NULL)
+    {
+        result = SPAN_EMPTY;
+    }
+    else
+    {
+        *out_span = span;
+
+        int mask = 1000000000;
+
+        if (value < 0)
+        {
+            if (span_copy_u8(span, '-', &span))
+            {
+                result = SPAN_EMPTY;
+                goto SPAN_FROM_UINT32_FUNCTION_RETURN;
+            }
+
+            mask = (-1) * mask;
+        }
+
+        if (value == 0)
+        {
+            mask = 1;
+        }
+        else
+        {
+            while ((value % mask) == value)
+            {
+                mask /= 10;
+            }
+        }
+
+        while (mask != 0)
+        {
+            int digit = value / mask;
+            value = value % mask;
+            mask /= 10;
+            
+            if (span_copy_u8(span, '0' + digit, &span) != 0)
+            {
+                result = SPAN_EMPTY;
+                goto SPAN_FROM_UINT32_FUNCTION_RETURN;
+            }
+        }
+
+        result = span_slice(*out_span, 0, span_get_size(*out_span) - span_get_size(span));
+        *out_span = span;
+    }
+
+SPAN_FROM_UINT32_FUNCTION_RETURN:
+    return result;
+}
+
 span_t span_copy(span_t to, span_t from, span_t* remainder)
 {
     if (span_get_size(to) == 0 || span_get_size(to) < span_get_size(from))
@@ -207,6 +281,34 @@ span_t span_copy(span_t to, span_t from, span_t* remainder)
     }
 
     return span_slice(to, 0, span_get_size(from));
+}
+
+int span_copy_u8(span_t to, uint8_t c, span_t* remainder)
+{
+    int result;
+
+    if (span_is_empty(to))
+    {
+        result = ERROR;
+    }
+    else
+    {
+        if (span_set(to, 0, c) != 0)
+        {
+            result = ERROR;
+        }
+        else
+        {
+            if (remainder != NULL)
+            {
+                *remainder = span_slice_to_end(to, 1);
+            }
+
+            result = OK;
+        }
+    }
+
+    return result;
 }
 
 span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_size, span_t* remainder)

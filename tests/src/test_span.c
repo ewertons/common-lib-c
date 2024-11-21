@@ -295,6 +295,73 @@ static void span_regex_is_match_with_matches_matches_too_long_fails(void** state
     assert_int_equal(span_regex_is_match(string, pattern, matches, sizeofarray(matches), &number_of_matches), invalid_argument);
 }
 
+static void span_set_success(void** state)
+{
+    (void)state;
+    uint8_t data_raw[8] = { '1', '2', '3', '4', '3', '2', '1', '0' };
+
+    span_t d = span_from_memory(data_raw);
+
+    assert_int_equal(span_set(d, 0, '9'), 0);
+    assert_int_equal(span_set(d, 2, '1'), 0);
+    assert_int_equal(span_set(d, 4, '1'), 0);
+    assert_int_equal(span_set(d, 7, '9'), 0);
+
+    assert_memory_equal(data_raw, "92141219", 8);
+}
+
+static void span_copy_u8_success(void** state)
+{
+    (void)state;
+    uint8_t data[8] = { 0 };
+
+    span_t d = span_from_memory(data);
+
+    assert_int_equal(span_copy_u8(d, 'e', &d), 0);
+    assert_int_equal(span_copy_u8(d, 'd', &d), 0);
+    assert_int_equal(span_copy_u8(d, 'c', &d), 0);
+    assert_int_equal(span_copy_u8(d, 'b', &d), 0);
+    assert_int_equal(span_copy_u8(d, 'b' - 1, &d), 0);
+    assert_int_equal(span_copy_u8(d, 0, &d), 0);
+
+    assert_memory_equal(data, "edcba\0", 6);
+}
+
+static void span_from_int32_success(void** state)
+{
+    (void)state;
+    uint8_t data_raw[11] = { 0 };
+
+    span_t data = span_from_memory(data_raw);
+    span_t remainder;
+    span_t result;
+
+    result = span_from_int32(data, 0, &remainder);
+    assert_int_equal(span_get_size(result), 1);
+    assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
+    assert_memory_equal(span_get_ptr(result), "0", span_get_size(result));
+
+    result = span_from_int32(data, 1234, &remainder);
+    assert_int_equal(span_get_size(result), 4);
+    assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
+    assert_memory_equal(span_get_ptr(result), "1234", span_get_size(result));
+
+    result = span_from_int32(data, 2147483647, &remainder);
+    assert_int_equal(span_get_size(result), 10);
+    assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
+    assert_memory_equal(span_get_ptr(result), "2147483647", span_get_size(result));
+
+    result = span_from_int32(data, -1234, &remainder);
+    assert_int_equal(span_get_size(result), 5);
+    assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
+    assert_memory_equal(span_get_ptr(result), "-1234", span_get_size(result));
+
+    result = span_from_int32(data, -2147483648, &remainder);
+    assert_int_equal(span_get_size(result), 11);
+    assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
+    assert_memory_equal(span_get_ptr(result), "-2147483648", span_get_size(result));
+}
+
 int test_span()
 {
   const struct CMUnitTest tests[] = {
@@ -315,7 +382,10 @@ int test_span()
       cmocka_unit_test(span_regex_is_match_with_matches_NULL_matches_fails),
       cmocka_unit_test(span_regex_is_match_with_matches_zero_size_matches_fails),
       cmocka_unit_test(span_regex_is_match_with_matches_NULL_number_of_matches_fails),
-      cmocka_unit_test(span_regex_is_match_with_matches_matches_too_long_fails)
+      cmocka_unit_test(span_regex_is_match_with_matches_matches_too_long_fails),
+      cmocka_unit_test(span_set_success),
+      cmocka_unit_test(span_copy_u8_success),
+      cmocka_unit_test(span_from_int32_success),
   };
 
   return cmocka_run_group_tests_name("span_tests", tests, NULL, NULL);

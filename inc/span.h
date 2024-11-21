@@ -40,6 +40,8 @@ static inline uint8_t span_get(span_t s, uint32_t p)
     return s.ptr[p];
 }
 
+int span_set(span_t span, uint32_t position, uint8_t value);
+
 #define span_from_memory(x) span_init(x, sizeofarray(x))
 
 #define span_from_string(x) span_init(x, sizeofarray(x) - 1)
@@ -109,6 +111,16 @@ static inline span_t span_slice_to_end(span_t span, uint32_t start)
 int span_to_uint32_t(span_t span, uint32_t* value);
 
 /**
+ * @brief 
+ * 
+ * @param span 
+ * @param value 
+ * @param out_span 
+ * @return span_t 
+ */
+span_t span_from_int32(span_t span, int32_t value, span_t* out_span);
+
+/**
  * @brief Finds a token in a #span_t and returns the portions left and right of it separately.
  * 
  * @param span The #span where to search for \p delimiter and extract \p left and \p right.
@@ -141,6 +153,16 @@ static inline span_t span_grab(span_t from, uint32_t size, span_t* out_remainder
  * @return                 A #span_t in \p to with the size of \p from if succeeds, or #SPAN_EMPTY if it fails.
  */
 span_t span_copy(span_t to, span_t from, span_t* remainder);
+
+/**
+ * @brief Copies a single character into a span.
+ * 
+ * @param to           #span_t where to write the value to. 
+ * @param c            Value to write into \p to.
+ * @param remainder    #span_t pointer where to store the unused remainder of  \p to.
+ * @return             int Zero if success, or non-zero if any failures occur.
+ */
+int span_copy_u8(span_t to, uint8_t c, span_t* remainder);
 
 span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_size, span_t* remainder);
 
