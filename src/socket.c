@@ -20,10 +20,10 @@ static bool is_socket_library_initialized = false;
 static void socket_error(SSL *ssl, int err) {
   int socket_err = SSL_get_error(ssl, err);
 
-  printf("Error: SSL_accept() error code %d\n", socket_err);
+  printf("Error: SSL_accept() error code %d\n", socket_err); // TODO: change this to logs, remove printf.
   if (socket_err == SSL_ERROR_SYSCALL) {
-    if (err == -1) printf("  I/O error (%s)\n", strerror(errno));
-    if (err == 0) printf("  SSL peer closed connection\n");
+    if (err == -1) printf("  I/O error (%s)\n", strerror(errno)); // TODO: change this to logs, remove printf.
+    if (err == 0) printf("  SSL peer closed connection\n"); // TODO: change this to logs, remove printf.
   }
 }
 
@@ -39,8 +39,12 @@ result_t socket_init(socket_t* ssl1, socket_config_t* config)
   }
 
     int err;
+    const SSL_METHOD *meth = (config->is_listener ? TLS_server_method() : TLS_server_method());
 
-    const SSL_METHOD *meth = SSLv23_server_method();
+    ssl1->is_listener = config->is_listener;
+    ssl1->local = config->local;
+    ssl1->remote = config->remote;
+
     ssl1->ctx = SSL_CTX_new(meth);
     if (ssl1->ctx == NULL) {
         result = error;
@@ -49,7 +53,7 @@ result_t socket_init(socket_t* ssl1, socket_config_t* config)
   if (config->tls.certificate_file)
   {
     if (SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0) {
-        printf("Error: Valid server certificate not found in %s\n", config->tls.certificate_file);
+        printf("Error: Valid server certificate not found in %s\n", config->tls.certificate_file);// TODO: change this to logs, remove printf.
         result = error;
       }
   }
@@ -57,37 +61,45 @@ result_t socket_init(socket_t* ssl1, socket_config_t* config)
   if (config->tls.private_key_file)
   {
     if (SSL_CTX_use_PrivateKey_file(ssl1->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0) {
-      printf("Error: Valid server private key not found in %s\n", config->tls.private_key_file);
+      printf("Error: Valid server private key not found in %s\n", config->tls.private_key_file);// TODO: change this to logs, remove printf.
       result = error;
     }
   }
 
   if (!SSL_CTX_check_private_key(ssl1->ctx)) {
-    printf("Error: Private key does not match the certificate public key\n");
+    printf("Error: Private key does not match the certificate public key\n"); // TODO: change this to logs, remove printf.
     result = error;
   }
 
-  ssl1->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
-  if (ssl1->listen_sd == -1) result = error;
-  
-  memset(&ssl1->sa_serv, '\0', sizeof(ssl1->sa_serv));
-  ssl1->sa_serv.sin_family      = AF_INET;
-  ssl1->sa_serv.sin_addr.s_addr = INADDR_ANY;
-  ssl1->sa_serv.sin_port        = htons(config->local.port);          /* Server Port number */
-  
-  err = bind(ssl1->listen_sd, (struct sockaddr*) &ssl1->sa_serv, sizeof (ssl1->sa_serv));
-  if (err == -1) {
-    printf("Error: Could not bind to port %d (%s)\n", config->local.port, strerror(errno));
-    result = error;
-  }
-	     
-  err = listen(ssl1->listen_sd, 5);
-  if (err == -1) {
-    printf("Error: listen() (%s)\n", strerror(errno));
-    result = error;
+  if (config->is_listener)
+  {
+    ssl1->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
+    if (ssl1->listen_sd == -1) result = error;
+    
+    memset(&ssl1->sa_serv, '\0', sizeof(ssl1->sa_serv));
+    ssl1->sa_serv.sin_family      = AF_INET;
+    ssl1->sa_serv.sin_addr.s_addr = INADDR_ANY;
+    ssl1->sa_serv.sin_port        = htons(config->local.port);          /* Server Port number */
+    
+    err = bind(ssl1->listen_sd, (struct sockaddr*) &ssl1->sa_serv, sizeof (ssl1->sa_serv));
+    if (err == -1) {
+      printf("Error: Could not bind to port %d (%s)\n", config->local.port, strerror(errno)); // TODO: change this to logs, remove printf.
+      result = error;
+    }
+        
+    err = listen(ssl1->listen_sd, 5);
+    if (err == -1) {
+      printf("Error: listen() (%s)\n", strerror(errno)); // TODO: change this to logs, remove printf.
+      result = error;
+    }
+    else
+    {
+      result = ok;
+    }
   }
   else
   {
+
     result = ok;
   }
 
@@ -202,17 +214,78 @@ result_t socket_connect(socket_t* client)
 {
   result_t result;
 
-  if (client == NULL)
+  if (client == NULL || client->is_listener)
   {
     result = invalid_argument;
   }
   else
   {
-    
-    result = ok;
+    /* ----------------------------------------------- */
+    /* TCP connection is ready. Do server side SSL. */
+    int err, rv;
+    int sockfd, numbytes; 
+    struct addrinfo hints, *servinfo, *p;
+
+    (void)memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM; // TODO: review this.
+
+    uint8_t port_string_raw[6] = { 0 };
+    span_t port_string = span_from_memory(port_string_raw);
+
+    if (span_is_empty(span_from_int32(port_string, client->remote.port, NULL)))
+    {
+      fprintf(stderr, "span_from_int32\n"); // TODO: review this. Log instead?
+      return 1;
+    }
+
+    if ((rv = getaddrinfo(span_get_ptr(client->remote.hostname), port_string_raw, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv)); // TODO: review this. Log instead?
+        return 1;
+    }
+
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
+        {
+            perror("client: socket");
+            continue;
+        }
+
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
+        {
+            close(sockfd);
+            perror("client: connect");
+            continue;
+        }
+
+        break;
+    }
+
+    freeaddrinfo(servinfo);
+
+    if (p == NULL) {
+        fprintf(stderr, "client: failed to connect\n");
+        result = error;
+    }
+    else
+    {
+      client->sd = sockfd;
+
+      client->ssl = SSL_new(client->ctx);
+      SSL_set_fd(client->ssl, client->sd);
+      err = SSL_connect(client->ssl);
+      if (err != 1) {
+        // TODO: destroy SSL components.
+        socket_error(client->ssl, err);
+        result = error;
+      }
+      else
+      {
+        result = ok;      
+      }
+    }
   }
 }
-
 
 result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read)
 {

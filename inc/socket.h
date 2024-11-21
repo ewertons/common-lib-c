@@ -13,13 +13,25 @@
 
 #define DEFAULT_LISTENING_PORT 8234
 
+typedef struct local_host_config
+{
+    int port;
+} local_host_config_t;
+
+typedef struct remote_host_config
+{
+    span_t hostname;
+    int port;
+} remote_host_config_t;
+
 typedef struct socket_config
 {
+    bool is_listener;
+
+    local_host_config_t local;
+    remote_host_config_t remote;
+
     bool use_tls;
-    struct
-    {
-        int port;
-    } local;
     struct
     {
         bool enable;
@@ -30,22 +42,36 @@ typedef struct socket_config
 
 typedef struct socket
 {
-  int listen_sd;
-  int sd;
-  struct sockaddr_in sa_serv;
-  struct sockaddr_in sa_cli;
-  socklen_t client_len;
-  SSL_CTX* ctx;
-  SSL*     ssl;
-  X509*    client_cert;
-  char*    str;
+    bool is_listener;
+    local_host_config_t local;
+    remote_host_config_t remote;
+    
+    int listen_sd;
+    int sd;
+    struct sockaddr_in sa_serv;
+    struct sockaddr_in sa_cli;
+    socklen_t client_len;
+    SSL_CTX* ctx;
+    SSL*     ssl;
+    X509*    client_cert;
+    char*    str;
 } socket_t;
 
 static inline socket_config_t socket_get_default_secure_listener_config()
 {
     socket_config_t config = { 0 };
+    config.is_listener = true;
     config.tls.enable = true;
     config.local.port = DEFAULT_LISTENING_PORT;
+    return config;
+}
+
+static inline socket_config_t socket_get_default_secure_client_config()
+{
+    socket_config_t config = { 0 };
+    config.is_listener = false;
+    config.tls.enable = true;
+    config.local.port = 0;
     return config;
 }
 
