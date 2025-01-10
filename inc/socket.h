@@ -6,12 +6,19 @@
 
 #include "span.h"
 #include "niceties.h"
+#include "task.h"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <openssl/ssl.h>
 
 #define DEFAULT_LISTENING_PORT 8234
+
+typedef enum socket_role
+{
+    socket_role_client,
+    socket_role_server
+} socket_role_t;
 
 typedef struct local_host_config
 {
@@ -26,7 +33,7 @@ typedef struct remote_host_config
 
 typedef struct socket_config
 {
-    bool is_listener;
+    socket_role_t role;
 
     local_host_config_t local;
     remote_host_config_t remote;
@@ -42,7 +49,7 @@ typedef struct socket_config
 
 typedef struct socket
 {
-    bool is_listener;
+    socket_role_t role;
     local_host_config_t local;
     remote_host_config_t remote;
     
@@ -55,12 +62,14 @@ typedef struct socket
     SSL*     ssl;
     X509*    client_cert;
     char*    str;
+
+    struct socket* parent;
 } socket_t;
 
-static inline socket_config_t socket_get_default_secure_listener_config()
+static inline socket_config_t socket_get_default_secure_server_config()
 {
     socket_config_t config = { 0 };
-    config.is_listener = true;
+    config.role = socket_role_server;
     config.tls.enable = true;
     config.local.port = DEFAULT_LISTENING_PORT;
     return config;
@@ -69,7 +78,7 @@ static inline socket_config_t socket_get_default_secure_listener_config()
 static inline socket_config_t socket_get_default_secure_client_config()
 {
     socket_config_t config = { 0 };
-    config.is_listener = false;
+    config.role = socket_role_client;
     config.tls.enable = true;
     config.local.port = 0;
     return config;
@@ -78,6 +87,7 @@ static inline socket_config_t socket_get_default_secure_client_config()
 result_t socket_init(socket_t* socket, socket_config_t* config);
 result_t socket_deinit(socket_t* socket);
 result_t socket_accept(socket_t* server, socket_t* client);
+task_t* socket_accept_async(socket_t* server, socket_t* client);
 result_t socket_connect(socket_t* client);
 result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read);
 result_t socket_write(socket_t* ssl1, span_t data);

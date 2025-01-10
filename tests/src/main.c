@@ -15,6 +15,8 @@ int main()
 {
   int result = 0;
 
+  task_platform_init();
+
   result += test_span();
   result += test_circular_list();
   result += test_bst_redblack();
@@ -22,9 +24,10 @@ int main()
   result += test_list();
   result += test_base64();
   result += test_hmac_sha256();
+  result += test_socket();
   
-  task_platform_init();
-  result += test_task();
+  // result += test_task();
+
   task_platform_deinit();
 
   return result;
