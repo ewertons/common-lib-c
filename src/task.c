@@ -7,6 +7,7 @@
 #define TASK_COUNT 10
 static task_t tasks[TASK_COUNT];
 static sem_t tasks_semaphore;
+static bool platform_initialized;
 
 static task_t* reserve_task()
 {
