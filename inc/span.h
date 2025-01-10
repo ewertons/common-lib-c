@@ -118,7 +118,7 @@ int span_to_uint32_t(span_t span, uint32_t* value);
  * @param out_span 
  * @return span_t 
  */
-span_t span_from_int32(span_t span, int32_t value, span_t* out_span);
+span_t span_copy_int32(span_t span, int32_t value, span_t* out_span);
 
 /**
  * @brief Finds a token in a #span_t and returns the portions left and right of it separately.

@@ -208,17 +208,17 @@ SPAN_TO_UINT32_T_FUNCTION_RETURN:
     return result;
 }
 
-span_t span_from_int32(span_t span, int32_t value, span_t* out_span)
+span_t span_copy_int32(span_t span, int32_t value, span_t* out_span)
 {
     span_t result;
 
-    if (span_is_empty(span) || out_span == NULL)
+    if (span_is_empty(span))
     {
         result = SPAN_EMPTY;
     }
     else
     {
-        *out_span = span;
+        span_t original_span = span;
 
         int mask = 1000000000;
 
@@ -258,8 +258,12 @@ span_t span_from_int32(span_t span, int32_t value, span_t* out_span)
             }
         }
 
-        result = span_slice(*out_span, 0, span_get_size(*out_span) - span_get_size(span));
-        *out_span = span;
+        result = span_slice(original_span, 0, span_get_size(original_span) - span_get_size(span));
+
+        if (out_span != NULL)
+        {
+            *out_span = span;
+        }
     }
 
 SPAN_FROM_UINT32_FUNCTION_RETURN:

@@ -327,7 +327,7 @@ static void span_copy_u8_success(void** state)
     assert_memory_equal(data, "edcba\0", 6);
 }
 
-static void span_from_int32_success(void** state)
+static void span_copy_int32_success(void** state)
 {
     (void)state;
     uint8_t data_raw[11] = { 0 };
@@ -336,27 +336,27 @@ static void span_from_int32_success(void** state)
     span_t remainder;
     span_t result;
 
-    result = span_from_int32(data, 0, &remainder);
+    result = span_copy_int32(data, 0, &remainder);
     assert_int_equal(span_get_size(result), 1);
     assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
     assert_memory_equal(span_get_ptr(result), "0", span_get_size(result));
 
-    result = span_from_int32(data, 1234, &remainder);
+    result = span_copy_int32(data, 1234, &remainder);
     assert_int_equal(span_get_size(result), 4);
     assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
     assert_memory_equal(span_get_ptr(result), "1234", span_get_size(result));
 
-    result = span_from_int32(data, 2147483647, &remainder);
+    result = span_copy_int32(data, 2147483647, &remainder);
     assert_int_equal(span_get_size(result), 10);
     assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
     assert_memory_equal(span_get_ptr(result), "2147483647", span_get_size(result));
 
-    result = span_from_int32(data, -1234, &remainder);
+    result = span_copy_int32(data, -1234, &remainder);
     assert_int_equal(span_get_size(result), 5);
     assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
     assert_memory_equal(span_get_ptr(result), "-1234", span_get_size(result));
 
-    result = span_from_int32(data, -2147483648, &remainder);
+    result = span_copy_int32(data, -2147483648, &remainder);
     assert_int_equal(span_get_size(result), 11);
     assert_int_equal(span_get_size(remainder), span_get_size(data) - span_get_size(result));
     assert_memory_equal(span_get_ptr(result), "-2147483648", span_get_size(result));
@@ -385,7 +385,7 @@ int test_span()
       cmocka_unit_test(span_regex_is_match_with_matches_matches_too_long_fails),
       cmocka_unit_test(span_set_success),
       cmocka_unit_test(span_copy_u8_success),
-      cmocka_unit_test(span_from_int32_success),
+      cmocka_unit_test(span_copy_int32_success),
   };
 
   return cmocka_run_group_tests_name("span_tests", tests, NULL, NULL);
