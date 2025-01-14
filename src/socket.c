@@ -7,7 +7,8 @@
 #include <netdb.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#include "openssl/crypto.h"
+#include <openssl/crypto.h>
+#include <openssl/bio.h>
 
 #include <stdio.h>
 #include <sys/socket.h>
@@ -38,6 +39,88 @@ static void socket_error(SSL *ssl, int err)
     }
 }
 
+static int add_certificate_to_store(SSL_CTX* ssl_context, const char* certificate_file_path)
+{
+    int result = 0;
+
+    if (certificate_file_path != NULL)
+    {
+        X509_STORE* cert_store = SSL_CTX_get_cert_store(ssl_context);
+
+        if (cert_store == NULL)
+        {
+            printf("failure in SSL_CTX_get_cert_store.\n");
+            result = 1;
+        }
+        else
+        {
+#if (OPENSSL_VERSION_NUMBER >= 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER)
+            const BIO_METHOD* bio_method;
+#else
+            BIO_METHOD* bio_method;
+#endif
+            bio_method = BIO_s_mem();
+
+            if (bio_method == NULL)
+            {
+                printf("failure in BIO_s_mem\n");
+                result = 1;
+            }
+            else
+            {
+                BIO* cert_file_bio = BIO_new_file(certificate_file_path, "r");
+
+                if (cert_file_bio == NULL)
+                {
+                    printf("failure in BIO_file_new\n");
+                    result = 1;
+                }
+                else
+                {
+                    {
+                        {
+                            X509* certificate;
+
+                            while ((certificate = PEM_read_bio_X509(cert_file_bio, NULL, NULL, NULL)) != NULL)
+                            {
+                                if (!X509_STORE_add_cert(cert_store, certificate))
+                                {
+                                    X509_free(certificate);
+                                    printf("failure in X509_STORE_add_cert\n");
+                                    break;
+                                }
+                                X509_free(certificate);
+                            }
+                            if (certificate == NULL)
+                            {
+                                result = 0;/*all is fine*/
+                            }
+                            else
+                            {
+                                /*previous while loop terminated unfortunately*/
+                                result = 1;
+                            }
+                        }
+                    }
+
+                    BIO_free(cert_file_bio);
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+static void SSL_debug(int write_p, int version,
+                                         int content_type, const void *buf,
+                                         size_t len, SSL *ssl, void *arg)
+{
+  (void)ssl;
+  (void)arg;
+  printf("%s [%d][%d] %.*s\n", write_p == 0 ? "<-" : "->", version, content_type, (int)len, (char*)buf);
+}
+
 result_t socket_init(socket_t *ssl1, socket_config_t *config)
 {
     result_t result;
@@ -59,17 +142,28 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
 
     ssl1->ctx = SSL_CTX_new(ssl_method);
 
+    // SSL_CTX_set_msg_callback(ssl1->ctx, SSL_debug);
+    // SSL_set_msg_callback_arg(ssl1->ssl, BIO_new_fp(stdout, 0));
+
     if (ssl1->ctx == NULL)
     {
         result = error;
+    }
+
+    if (config->tls.trusted_certificate_file != NULL)
+    {
+        if (add_certificate_to_store(ssl1->ctx, config->tls.trusted_certificate_file) != 0)
+        {
+            printf("Error: add_certificate_to_store failed\n");
+            result = error;            
+        }
     }
 
     if (config->tls.certificate_file)
     {
         if (SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
         {
-            printf("Error: Valid server certificate not found in %s\n",
-                    config->tls.certificate_file); // TODO: change this to logs, remove printf.
+            printf("Error: SSL_CTX_use_certificate_file failed\n");
             result = error;
         }
     }
@@ -78,8 +172,7 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
     {
         if (SSL_CTX_use_PrivateKey_file(ssl1->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0)
         {
-            printf("Error: Valid server private key not found in %s\n",
-                    config->tls.private_key_file); // TODO: change this to logs, remove printf.
+            printf("Error: SSL_CTX_use_PrivateKey_file failed\n");
             result = error;
         }
     }
@@ -175,22 +268,15 @@ result_t socket_deinit(socket_t *socket)
     return result;
 }
 
-static void SSL_debug(int write_p, int version,
-                                         int content_type, const void *buf,
-                                         size_t len, SSL *ssl, void *arg)
-{
-  (void)ssl;
-  (void)arg;
-  printf("%s [%d][%d] %.*s\n", write_p == 0 ? "<-" : "->", version, content_type, (int)len, (char*)buf);
-}
-
 result_t socket_accept(socket_t *server, socket_t *client)
 {
     result_t result = ok;
     int err;
 
+    memset(client, 0, sizeof(socket_t));
     client->client_len = sizeof(client->sa_cli);
     client->sd = accept(server->listen_sd, (struct sockaddr *)&client->sa_cli, &client->client_len);
+
     if (client->sd == -1)
     {
         printf("Error: accept() (%s)\n", strerror(errno));
@@ -198,22 +284,20 @@ result_t socket_accept(socket_t *server, socket_t *client)
     }
     // close(ssl1->listen_sd);
 
-    {
-        char buffer[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &client->sa_cli.sin_addr.s_addr, buffer, sizeof(buffer));
-        printf("Connection from %s:%d\n", buffer, ntohs(client->sa_cli.sin_port));
-    }
+    char buffer[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client->sa_cli.sin_addr.s_addr, buffer, sizeof(buffer));
+    printf("Connection from %s:%d\n", buffer, ntohs(client->sa_cli.sin_port));
 
     /* ----------------------------------------------- */
     /* TCP connection is ready. Do server side SSL. */
 
     client->ssl = SSL_new(server->ctx);
-
-    SSL_CTX_set_msg_callback(client->ctx, SSL_debug);
-    // SSL_set_msg_callback_arg(client->ssl, BIO_new_fp(stdout, 0));
+    SSL_set_msg_callback(client->ssl, SSL_debug);
 
     SSL_set_fd(client->ssl, client->sd);
+
     err = SSL_accept(client->ssl);
+
     if (err != 1)
     {
         socket_error(client->ssl, err);
@@ -345,6 +429,8 @@ result_t socket_connect(socket_t *client)
             client->sd = sockfd;
 
             client->ssl = SSL_new(client->ctx);
+            SSL_set_msg_callback(client->ssl, SSL_debug);
+
             err = SSL_set_fd(client->ssl, client->sd);
 
             if (err != 1)

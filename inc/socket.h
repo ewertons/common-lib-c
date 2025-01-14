@@ -44,6 +44,7 @@ typedef struct socket_config
         bool enable;
         const char* certificate_file;
         const char* private_key_file;
+        const char* trusted_certificate_file;
     } tls;
 } socket_config_t;
 
