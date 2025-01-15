@@ -123,8 +123,6 @@ static void SSL_debug(int write_p, int version,
 
 result_t socket_init(socket_t *ssl1, socket_config_t *config)
 {
-    result_t result;
-
     if (!is_socket_library_initialized)
     {
         SSL_load_error_strings();
@@ -132,56 +130,49 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
         is_socket_library_initialized = true;
     }
 
-    int err;
+    int socket_result;
     const SSL_METHOD *ssl_method = (config->role == socket_role_server ? TLS_server_method() : TLS_client_method());
 
     (void)memset(ssl1, 0, sizeof(socket_t));
+    
     ssl1->role = config->role;
     ssl1->local = config->local;
     ssl1->remote = config->remote;
-
     ssl1->ctx = SSL_CTX_new(ssl_method);
-
-    // SSL_CTX_set_msg_callback(ssl1->ctx, SSL_debug);
-    // SSL_set_msg_callback_arg(ssl1->ssl, BIO_new_fp(stdout, 0));
 
     if (ssl1->ctx == NULL)
     {
-        result = error;
+        return error;
     }
-
-    if (config->tls.trusted_certificate_file != NULL)
+    
+    if (config->tls.trusted_certificate_file != NULL &&
+        add_certificate_to_store(ssl1->ctx, config->tls.trusted_certificate_file) != 0)
     {
-        if (add_certificate_to_store(ssl1->ctx, config->tls.trusted_certificate_file) != 0)
-        {
-            printf("Error: add_certificate_to_store failed\n");
-            result = error;            
-        }
+        printf("Error: add_certificate_to_store failed\n");
+        return error;            
     }
 
-    if (config->tls.certificate_file)
+    if (config->tls.certificate_file != NULL &&
+        SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
     {
-        if (SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
-        {
-            printf("Error: SSL_CTX_use_certificate_file failed\n");
-            result = error;
-        }
+        printf("Error: SSL_CTX_use_certificate_file failed\n");
+        return error;
     }
 
-    if (config->tls.private_key_file)
+    if (config->tls.private_key_file != NULL)
     {
         if (SSL_CTX_use_PrivateKey_file(ssl1->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0)
         {
             printf("Error: SSL_CTX_use_PrivateKey_file failed\n");
-            result = error;
+            return error;
         }
-    }
 
-    if (!SSL_CTX_check_private_key(ssl1->ctx))
-    {
-        printf("Error: Private key does not match the certificate public key\n"); // TODO: change this to logs,
-                                                                                  // remove printf.
-        result = error;
+        if (!SSL_CTX_check_private_key(ssl1->ctx))
+        {
+            printf("Error: Private key does not match the certificate public key\n"); // TODO: change this to logs,
+                                                                                    // remove printf.
+            return error;
+        }
     }
 
     if (config->role == socket_role_server)
@@ -189,42 +180,41 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
         ssl1->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
 
         if (ssl1->listen_sd == -1)
-            result = error;
+        {
+            return error;
+        }
 
         memset(&ssl1->sa_serv, '\0', sizeof(ssl1->sa_serv));
         ssl1->sa_serv.sin_family = AF_INET;
         ssl1->sa_serv.sin_addr.s_addr = INADDR_ANY;
         ssl1->sa_serv.sin_port = htons(config->local.port); /* Server Port number */
 
-        err = bind(ssl1->listen_sd, (struct sockaddr *)&ssl1->sa_serv, sizeof(ssl1->sa_serv));
+        socket_result = bind(ssl1->listen_sd, (struct sockaddr *)&ssl1->sa_serv, sizeof(ssl1->sa_serv));
 
-        if (err == -1)
+        if (socket_result == -1)
         {
             printf("Error: Could not bind to port %d (%s)\n", config->local.port,
                    strerror(errno)); // TODO: change this to logs, remove printf.
-            result = error;
+            return error;
         }
 
-        err = listen(ssl1->listen_sd, 5);
+        socket_result = listen(ssl1->listen_sd, 5);
 
-        if (err == -1)
+        if (socket_result == -1)
         {
             printf("Error: listen() (%s)\n",
                    strerror(errno)); // TODO: change this to logs, remove printf.
-            result = error;
+            return error;
         }
         else
         {
-            result = ok;
+            return ok;
         }
     }
     else
     {
-
-        result = ok;
+        return ok;
     }
-
-    return result;
 }
 
 result_t socket_deinit(socket_t *socket)
@@ -410,7 +400,7 @@ result_t socket_connect(socket_t *client)
             if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
             {
                 close(sockfd);
-                perror("client: connect");
+                // perror("client: connect");
                 continue;
             }
 
