@@ -259,7 +259,7 @@ function generate_server_certificate()
 
     generate_device_certificate_common "${common_name}" "${device_prefix}" \
                                        "${certificate_dir}" "${ca_password}" \
-                                       "${openssl_config_file}" "server" \
+                                       "${openssl_config_file}" "server_cert" \
                                        "Server"
 }
 
@@ -375,7 +375,7 @@ function generate_server_certificate_from_intermediate()
     rm -f ./private/server.key.pem
     rm -f ./certs/server.key.pem
     rm -f ./certs/server-full-chain.cert.pem
-    generate_leaf_certificate "${1}" "server" \
+    generate_server_certificate "${1}" "server" \
                               "${intermediate_ca_dir}" "${intermediate_ca_password}" \
                               "${openssl_intermediate_config_file}"
 }

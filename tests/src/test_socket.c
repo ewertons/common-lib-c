@@ -18,7 +18,7 @@
 static void socket_client_and_server_success(void** state)
 {
     (void)state;
-    int port = 5577;
+    int port = 5578;
     uint8_t raw_write_buffer[10];
     uint8_t raw_read_buffer[10];
     span_t read_buffer = span_from_memory(raw_read_buffer);
@@ -45,6 +45,7 @@ static void socket_client_and_server_success(void** state)
     task_t* accept_task = socket_accept_async(&server_listen_socket, &server_socket);
     assert_non_null(accept_task);
 
+    // openssl s_client -host localhost -port 5578  -verifyCAfile code/s1/http_listener/deps/common-lib-c/tests/scripts/certs/chain.ca.cert.pem
     // openssl s_server -port 5577 -cert /home/ewertons/code/s1/azure-iot-sdk-c/tools/CACertificates/certs/server.cert.pem -key /home/ewertons/code/s1/azure-iot-sdk-c/tools/CACertificates/private/server.key.pem
     assert_int_equal(socket_connect(&client_socket), ok);
 
@@ -54,6 +55,11 @@ static void socket_client_and_server_success(void** state)
     // }
 
     // assert_true(task_wait(accept_task));
+
+    // for(int i = 0; i < 200000; i++)
+    // {
+    //     usleep(100);
+    // }
 
     for (int i = 0; i < 10; i++)
     {
