@@ -8,23 +8,35 @@ find_package(OpenSSL REQUIRED)
 enable_testing()
 
 set(header_files
-    ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/ansi_colors.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/base64.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/bst_redblack.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/common_lib_c.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/hmac_sha256.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/logging_simple.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/niceties.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/socket.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/socket_stream.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/stack.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/stream.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/task.h
 )
 
 set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/base64.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/span.c
     ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/list.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/hmac_sha256.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/socket_stream.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/span.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/task.c
 )
 
