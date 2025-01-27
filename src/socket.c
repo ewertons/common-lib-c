@@ -11,6 +11,7 @@
 #include <openssl/bio.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
@@ -539,8 +540,11 @@ result_t socket_deinit(socket_t *socket)
 
 static void check_peer_certificates(SSL* ssl, const char* peer_name)
 {
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
     X509* client_cert = SSL_get1_peer_certificate(ssl);;
-
+#else
+    X509* client_cert = SSL_get_peer_certificate(ssl);;
+#endif
     if (client_cert != NULL)
     {
         printf("%s certificate:\n", peer_name);
