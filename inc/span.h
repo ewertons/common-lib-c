@@ -79,6 +79,16 @@ static inline bool span_is_empty(span_t span)
 int span_find(span_t span, int32_t start, span_t target, span_t* out_remainder);
 
 /**
+ * @brief Finds a #span_t in another #span_t, searching from end to beginning.
+ * 
+ * @param span      #span_t in which the seach will be performed.
+ * @param start     Position in \p span to start searching for \p target. Use -1 to start from the very last position.
+ * @param target    #span_t to search for in \p span
+ * @return          The position of \p target in \p span if found or -1 if not found.
+ */
+int span_find_reverse(span_t span, int32_t start, span_t target);
+
+/**
  * @brief Iterates through a #span_t splitting it using \p delimiter until \p span is empty.
  * 
  * @param span          The #span_t to iterate through.
@@ -106,6 +116,21 @@ static inline span_t span_slice(span_t span, uint32_t start, uint32_t size)
 static inline span_t span_slice_to_end(span_t span, uint32_t start)
 {
     return span_slice(span, start, span.length - start);
+}
+
+/**
+ * @brief Slices \p end out of the \p span #span_t, effectively trimming its end.
+ * @example If #span_t \p span is ABCDEF and #span_t \p end is DEF out of #span_t \p span,
+ *          #span_slice_out(span, end) produces #span_t \p result out of \p span with content
+ *          ABC (of size 3).
+ * 
+ * @param span #span_t to slice from.
+ * @param end  #span_t to slice out from the end of \p span. It must be a #span_t contained in \p span.
+ * @return #span_t which starts at \p span and has the size of \p span minus the size of \p end.
+ */
+static inline span_t span_slice_out(span_t span, span_t end)
+{
+    return span_slice(span, 0, span_get_size(span) - span_get_size(end));
 }
 
 int span_to_uint32_t(span_t span, uint32_t* value);

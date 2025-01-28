@@ -103,6 +103,38 @@ int span_find(span_t span, int32_t start, span_t target, span_t* out_remainder)
     return result;
 }
 
+int span_find_reverse(span_t span, int32_t start, span_t target)
+{
+    int result = -1;
+
+    if (span_get_size(target) > 0 &&
+        span_get_size(target) <= span_get_size(span) &&
+        (start == -1 || (start >= (span_get_size(target) - 1) && start < span_get_size(span))))
+    {
+        for (int32_t h = (start == -1 ? span_get_size(span) - 1 : start); h >= (span_get_size(target) - 1); h--)
+        {
+            int i;
+
+            for (i = 0; i < span_get_size(target); i++)
+            {
+                if (span_get(span, h - i) != span_get(target, span_get_size(target) - 1 - i))
+                {
+                    break;
+                }
+            }
+
+            if (i == span_get_size(target))
+            {
+                result = h - i + 1;
+                break;
+            }
+        }   
+    }
+
+    return result;
+}
+
+
 result_t span_iterate(span_t span, span_t delimiter, span_t* out_item, span_t* remainder)
 {
     result_t result;

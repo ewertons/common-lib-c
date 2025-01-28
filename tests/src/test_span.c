@@ -137,6 +137,25 @@ static void span_find_success(void** state)
     assert_ptr_equal(span_get_ptr(f), &data[5]);
 }
 
+
+static void span_find_reverse_success(void** state)
+{
+    (void)state;
+    uint8_t data[8] = { '1', '2', '3', '4', '3', '2', '1', '0' };
+
+    span_t s = span_from_memory(data);
+    
+    assert_int_equal(span_find_reverse(s, -1, span_from_str_literal("1")), 6);
+    assert_int_equal(span_find_reverse(s, 5, span_from_str_literal("1")), 0);
+    assert_int_equal(span_find_reverse(s, -1, span_from_str_literal("43")), 3);
+    assert_int_equal(span_find_reverse(s, 3, span_from_str_literal("43")), -1);
+    assert_int_equal(span_find_reverse(s, 3, span_from_str_literal("1234")), 0);
+    assert_int_equal(span_find_reverse(s, 2, span_from_str_literal("1234")), -1);
+    assert_int_equal(span_find_reverse(s, -1, span_from_str_literal("210")), 5);
+    assert_int_equal(span_find_reverse(s, 7, span_from_str_literal("210")), 5);
+    assert_int_equal(span_find_reverse(s, 8, span_from_str_literal("210")), -1);
+}
+
 static void span_split_success(void** state)
 {
     (void)state;
@@ -372,6 +391,7 @@ int test_span()
       cmocka_unit_test(span_slice_failure),
       cmocka_unit_test(span_slice_to_end_success),
       cmocka_unit_test(span_find_success),
+      cmocka_unit_test(span_find_reverse_success),
       cmocka_unit_test(span_split_success),
       cmocka_unit_test(span_split_failure),
       cmocka_unit_test(span_regex_is_match_success),
