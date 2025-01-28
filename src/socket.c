@@ -757,11 +757,11 @@ result_t socket_connect(socket_t *client)
     return result;
 }
 
-result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read)
+result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read, span_t* remainder)
 {
     result_t result;
 
-    if (ssl1 == NULL)
+    if (ssl1 == NULL || out_read == NULL)
     {
         result = invalid_argument;
     }
@@ -774,6 +774,12 @@ result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read)
         if (bytes_read > 0)
         {
             *out_read = span_slice(buffer, 0, bytes_read);
+
+            if (remainder != NULL)
+            {
+                *remainder = span_slice_to_end(buffer, bytes_read);
+            }
+
             result = ok;
         }
         else
@@ -788,7 +794,11 @@ result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read)
                 result = error;
                 break;
             default:
-                result = ok;
+                if (remainder != NULL)
+                {
+                    *remainder = buffer;
+                }
+                result = no_data;
                 break;
             };
         }

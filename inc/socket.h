@@ -90,7 +90,7 @@ result_t socket_deinit(socket_t* socket);
 result_t socket_accept(socket_t* server, socket_t* client);
 task_t* socket_accept_async(socket_t* server, socket_t* client);
 result_t socket_connect(socket_t* client);
-result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read);
+result_t socket_read(socket_t* ssl1, span_t buffer, span_t* out_read, span_t* remainder);
 result_t socket_write(socket_t* ssl1, span_t data);
 
 #endif // SOCKET_H

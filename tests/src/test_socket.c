@@ -69,7 +69,7 @@ static void socket_client_and_server_success(void** state)
 
       assert_int_not_equal(0, span_get_size(write_buffer));
       assert_int_equal(socket_write(&client_socket, write_buffer), ok);
-      assert_int_equal(socket_read(&server_socket, read_buffer, &bytes_read), ok);
+      assert_int_equal(socket_read(&server_socket, read_buffer, &bytes_read, NULL), ok);
       assert_int_equal(span_get_size(bytes_read), span_get_size(write_buffer));
       assert_memory_equal(span_get_ptr(bytes_read), span_get_ptr(write_buffer), span_get_size(bytes_read));
     }

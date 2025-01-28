@@ -24,6 +24,7 @@ typedef enum result
     not_found =         make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x03),
     end_of_data =       make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x05),
     end_of_file =       make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x06),
+    no_data =           make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x07),
     try_again =         make_result(C_UTILS, is_error_result,   is_retryable_error,     0x10),
     completed_successfully =         make_result(C_UTILS, is_success_result,   is_retryable_error,     0x30),
     cancelled =         make_result(C_UTILS, is_error_result,   is_non_retryable_error,     0x31),
