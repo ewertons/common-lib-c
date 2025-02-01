@@ -647,7 +647,8 @@ static result_t internal_socket_accept_async(void *user_args, task_t *my_task)
 task_t *socket_accept_async(socket_t *server, socket_t *client)
 {
     client->parent = server;
-    return task_run(internal_socket_accept_async, client);
+    // TODO: pass a cancellation handler.
+    return task_run(internal_socket_accept_async, NULL, client);
 }
 
 // https://cpp.hotexamples.com/examples/-/-/SSL_set_fd/cpp-ssl_set_fd-function-examples.html

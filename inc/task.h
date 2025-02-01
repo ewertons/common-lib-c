@@ -11,6 +11,7 @@
 struct task;
 
 typedef result_t (*task_function_t)(void* user_args, struct task* my_task);
+typedef void (*task_cancellation_callback_t)(void* user_args);
 
 typedef struct task
 {
@@ -18,6 +19,7 @@ typedef struct task
     bool is_cancelled;
     pthread_t thread;
     task_function_t function;
+    task_cancellation_callback_t cancellation_callback;
     void* user_args;
     sem_t semaphore;
     result_t result;
@@ -29,7 +31,7 @@ typedef struct task
 void task_platform_init();
 void task_platform_deinit();
 
-task_t* task_run(task_function_t function, void* args);
+task_t* task_run(task_function_t function, task_cancellation_callback_t cancellation_callback, void* args);
 
 task_t* task_continue_with(task_t* initial_task, task_t* continuation_task);
 bool task_is_cancelled(task_t* task);

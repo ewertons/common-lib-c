@@ -76,23 +76,34 @@ void task_platform_deinit()
 }
 
 
-task_t* task_run(task_function_t function, void* args)
+task_t* task_run(task_function_t function, task_cancellation_callback_t cancellation_callback, void* args)
 {
-    task_t* task = reserve_task();
+    task_t* task;
 
-    if (task != NULL)
+    if (function == NULL)
     {
-        task->user_args = args;
-        task->function = function;
+        task = NULL;
+    }
+    else
+    {
+        task = reserve_task();
 
-        if (sem_init(&task->semaphore, 0, 1) != 0)
+        // TODO: log error.
+        if (task != NULL)
         {
-            release_task(task);
-            task = NULL;
-        }
-        else if (pthread_create(&task->thread, NULL, inner_thread_function, task) != 0)
-        {
-            release_task(task);
+            task->user_args = args;
+            task->function = function;
+            task->cancellation_callback = cancellation_callback;
+
+            if (sem_init(&task->semaphore, 0, 1) != 0)
+            {
+                release_task(task);
+                task = NULL;
+            }
+            else if (pthread_create(&task->thread, NULL, inner_thread_function, task) != 0)
+            {
+                release_task(task);
+            }
         }
     }
 
@@ -136,6 +147,11 @@ void task_cancel(task_t* task)
             task->is_cancelled = true;
 
             (void)task_unlock(task);
+
+            if (task->cancellation_callback != NULL)
+            {
+                task->cancellation_callback(task->user_args);
+            }
         }
     }
 }

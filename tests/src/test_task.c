@@ -49,7 +49,7 @@ static void task_run_success(void** state)
 
     int counter = 0;
 
-    task_t* task = task_run(counter_add_1_async, &counter);
+    task_t* task = task_run(counter_add_1_async, NULL, &counter);
 
     task_wait(task);
 
@@ -62,7 +62,7 @@ static void task_cancel_success(void** state)
 
     bool is_cancelled = false;
 
-    task_t* task = task_run(keep_running_async, &is_cancelled);
+    task_t* task = task_run(keep_running_async, NULL, &is_cancelled);
 
     sleep(1);
 
