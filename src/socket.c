@@ -868,3 +868,282 @@ result_t socket_write(socket_t *ssl1, span_t data)
 
     return result;
 }
+
+/* ------------------------------------------------------------------------- *
+ *                          Non-blocking primitives
+ * ------------------------------------------------------------------------- */
+
+result_t socket_set_nonblocking(int fd)
+{
+    if (fd < 0)
+    {
+        return invalid_argument;
+    }
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+    {
+        return error;
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+        return error;
+    }
+    return ok;
+}
+
+uint32_t socket_get_io_want(socket_t* s)
+{
+    return (s == NULL) ? 0 : s->io_want;
+}
+
+result_t socket_accept_nb(socket_t* server, socket_t* client)
+{
+    if (server == NULL || client == NULL)
+    {
+        return invalid_argument;
+    }
+
+    memset(client, 0, sizeof(socket_t));
+    socket_clear_fds(client);
+    client->client_len = sizeof(client->sa_cli);
+
+    int sd = accept(server->listen_sd,
+                    (struct sockaddr*)&client->sa_cli, &client->client_len);
+    if (sd == -1)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return try_again;
+        }
+        if (errno == EINTR)
+        {
+            return try_again;
+        }
+        log_error("accept_nb (%s)", strerror(errno));
+        return error;
+    }
+
+    client->sd  = sd;
+    client->role = socket_role_server; /* server-side endpoint of an accepted connection */
+
+    /* Switch to non-blocking before the TLS handshake so SSL_accept reports
+     * WANT_READ / WANT_WRITE instead of blocking. */
+    if (socket_set_nonblocking(sd) != ok)
+    {
+        close(sd);
+        client->sd = -1;
+        return error;
+    }
+
+    /* Prime the TLS handshake. The caller must drive socket_handshake_nb
+     * until it returns ok. */
+    client->ssl = SSL_new(server->ctx);
+    if (client->ssl == NULL)
+    {
+        close(sd);
+        client->sd = -1;
+        return error;
+    }
+    SSL_set_fd(client->ssl, sd);
+    SSL_set_accept_state(client->ssl);
+    client->tcp_connected      = true;
+    client->tls_handshake_done = false;
+    client->io_want            = socket_io_want_read;
+
+    return ok;
+}
+
+result_t socket_handshake_nb(socket_t* s)
+{
+    if (s == NULL || s->ssl == NULL)
+    {
+        return invalid_argument;
+    }
+    if (s->tls_handshake_done)
+    {
+        s->io_want = 0;
+        return ok;
+    }
+
+    ERR_clear_error();
+    int rc = SSL_do_handshake(s->ssl);
+    if (rc == 1)
+    {
+        s->tls_handshake_done = true;
+        s->io_want            = 0;
+        return ok;
+    }
+
+    int sslerr = SSL_get_error(s->ssl, rc);
+    switch (sslerr)
+    {
+        case SSL_ERROR_WANT_READ:
+            s->io_want = socket_io_want_read;
+            return try_again;
+        case SSL_ERROR_WANT_WRITE:
+            s->io_want = socket_io_want_write;
+            return try_again;
+        default:
+            log_error("SSL handshake failed: ssl_err=%d errno=%s",
+                      sslerr, strerror(errno));
+            return error;
+    }
+}
+
+result_t socket_connect_nb_begin(socket_t* client)
+{
+    if (client == NULL || client->role == socket_role_server)
+    {
+        return invalid_argument;
+    }
+
+    int rv;
+    struct addrinfo hints, *servinfo, *p;
+    (void)memset(&hints, 0, sizeof hints);
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    uint8_t port_string[6] = { 0 };
+    if (span_is_empty(span_copy_int32(span_from_memory(port_string),
+                                      client->remote.port, NULL)))
+    {
+        return error;
+    }
+
+    if ((rv = getaddrinfo(span_get_ptr(client->remote.hostname),
+                          (char*)port_string, &hints, &servinfo)) != 0)
+    {
+        log_error("getaddrinfo: %s", gai_strerror(rv));
+        return error;
+    }
+
+    int sockfd = -1;
+    bool in_progress = false;
+    for (p = servinfo; p != NULL; p = p->ai_next)
+    {
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd == -1) continue;
+
+        if (socket_set_nonblocking(sockfd) != ok)
+        {
+            close(sockfd);
+            sockfd = -1;
+            continue;
+        }
+
+        int cr = connect(sockfd, p->ai_addr, p->ai_addrlen);
+        if (cr == 0)
+        {
+            client->tcp_connected = true;
+            break;
+        }
+        if (errno == EINPROGRESS)
+        {
+            client->tcp_connected = false;
+            in_progress = true;
+            break;
+        }
+        close(sockfd);
+        sockfd = -1;
+    }
+
+    freeaddrinfo(servinfo);
+
+    if (sockfd == -1)
+    {
+        return error;
+    }
+
+    client->sd      = sockfd;
+    client->io_want = in_progress ? socket_io_want_write : socket_io_want_none;
+    return ok;
+}
+
+result_t socket_connect_nb_continue(socket_t* client)
+{
+    if (client == NULL || client->sd == -1)
+    {
+        return invalid_argument;
+    }
+
+    if (!client->tcp_connected)
+    {
+        int err = 0;
+        socklen_t len = sizeof(err);
+        if (getsockopt(client->sd, SOL_SOCKET, SO_ERROR, &err, &len) == -1)
+        {
+            return error;
+        }
+        if (err == EINPROGRESS || err == EALREADY)
+        {
+            client->io_want = socket_io_want_write;
+            return try_again;
+        }
+        if (err != 0)
+        {
+            log_error("connect_nb (%s)", strerror(err));
+            return error;
+        }
+        client->tcp_connected = true;
+    }
+
+    /* Initialize TLS state on first call after TCP is up. */
+    if (client->ssl == NULL)
+    {
+        client->ssl = SSL_new(client->ctx);
+        if (client->ssl == NULL)
+        {
+            return error;
+        }
+        SSL_set_fd(client->ssl, client->sd);
+        SSL_set_connect_state(client->ssl);
+        SSL_set_verify(client->ssl, SSL_VERIFY_PEER, NULL);
+        client->io_want = socket_io_want_read;
+    }
+    return ok;
+}
+
+result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
+{
+    if (s == NULL || out_written == NULL)
+    {
+        return invalid_argument;
+    }
+    *out_written = 0;
+
+    if (span_is_empty(data))
+    {
+        s->io_want = 0;
+        return ok;
+    }
+
+    ERR_clear_error();
+    int n = SSL_write(s->ssl, span_get_ptr(data), (int)span_get_size(data));
+    if (n > 0)
+    {
+        *out_written = (uint32_t)n;
+        if ((uint32_t)n == span_get_size(data))
+        {
+            s->io_want = 0;
+            return ok;
+        }
+        /* Partial write — caller advances data by n and retries. */
+        s->io_want = socket_io_want_write;
+        return try_again;
+    }
+
+    int sslerr = SSL_get_error(s->ssl, n);
+    switch (sslerr)
+    {
+        case SSL_ERROR_WANT_READ:
+            s->io_want = socket_io_want_read;
+            return try_again;
+        case SSL_ERROR_WANT_WRITE:
+            s->io_want = socket_io_want_write;
+            return try_again;
+        default:
+            log_error("SSL_write_nb (ssl_err=%d errno=%s)",
+                      sslerr, strerror(errno));
+            return error;
+    }
+}

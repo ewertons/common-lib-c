@@ -67,10 +67,36 @@ static void socket_client_and_server_success(void** state)
     assert_int_equal(socket_deinit(&server_socket), ok);
 }
 
+static void socket_set_nonblocking_invalid_fd_fails(void** state)
+{
+    (void)state;
+    assert_int_not_equal(socket_set_nonblocking(-1), ok);
+}
+
+static void socket_set_nonblocking_valid_fd_succeeds(void** state)
+{
+    (void)state;
+    int fds[2];
+    assert_int_equal(pipe(fds), 0);
+    assert_int_equal(socket_set_nonblocking(fds[0]), ok);
+    assert_int_equal(socket_set_nonblocking(fds[1]), ok);
+    close(fds[0]);
+    close(fds[1]);
+}
+
+static void socket_get_io_want_on_null_returns_zero(void** state)
+{
+    (void)state;
+    assert_int_equal(socket_get_io_want(NULL), 0);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
       cmocka_unit_test(socket_client_and_server_success),
+      cmocka_unit_test(socket_set_nonblocking_invalid_fd_fails),
+      cmocka_unit_test(socket_set_nonblocking_valid_fd_succeeds),
+      cmocka_unit_test(socket_get_io_want_on_null_returns_zero),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);
