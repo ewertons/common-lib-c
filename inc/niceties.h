@@ -31,11 +31,11 @@ typedef enum result
     error =             make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0xFF)
 } result_t;
 
-#define result_get_error_flag(r) ((r >> 16) & 0x01)
+#define result_get_error_flag(r) (((r) >> 16) & 0x01)
 
-#define is_error(r) (result_get_error_flag(r) == is_error_result)
-#define failed(r)   is_error(r)
-#define is_success(r) (result_get_error_flag(r) == is_success_result)
-#define succeeded(r)   is_success(r)
+#define is_error(r)    (result_get_error_flag((r)) == is_error_result)
+#define failed(r)      is_error((r))
+#define is_success(r)  (result_get_error_flag((r)) == is_success_result)
+#define succeeded(r)   is_success((r))
 
 #endif // RESULT_H

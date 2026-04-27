@@ -9,11 +9,11 @@
 
 #include <unistd.h> 
 
-#define CLIENT_CERT_PATH "TBD"
-#define CLIENT_PK_PATH "TBD"
-#define SERVER_CERT_PATH "TBD"
-#define SERVER_PK_PATH "TBD"
-#define CA_CHAIN_PATH "TBD"
+#define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
+#define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
+#define SERVER_CERT_PATH "/tmp/http-c-certs/server/server.cert.pem"
+#define SERVER_PK_PATH "/tmp/http-c-certs/server/server.key.pem"
+#define CA_CHAIN_PATH "/tmp/http-c-certs/ca/chain.ca.cert.pem"
 
 static void socket_client_and_server_success(void** state)
 {
@@ -45,21 +45,10 @@ static void socket_client_and_server_success(void** state)
     task_t* accept_task = socket_accept_async(&server_listen_socket, &server_socket);
     assert_non_null(accept_task);
 
-    // openssl s_client -host localhost -port 5578  -verifyCAfile code/s1/http_listener/deps/common-lib-c/tests/scripts/certs/chain.ca.cert.pem
-    // openssl s_server -port 5577 -cert /home/ewertons/code/s1/azure-iot-sdk-c/tools/CACertificates/certs/server.cert.pem -key /home/ewertons/code/s1/azure-iot-sdk-c/tools/CACertificates/private/server.key.pem
     assert_int_equal(socket_connect(&client_socket), ok);
 
-    // for(int i = 0; i < 20000; i++)
-    // {
-    //     usleep(100);
-    // }
-
-    // assert_true(task_wait(accept_task));
-
-    // for(int i = 0; i < 200000; i++)
-    // {
-    //     usleep(100);
-    // }
+    assert_true(task_wait(accept_task));
+    task_release(accept_task);
 
     for (int i = 0; i < 10; i++)
     {

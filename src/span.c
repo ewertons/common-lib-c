@@ -8,6 +8,10 @@
 
 #define REGMATCH_ARRAY_MAX_SIZE 10
 
+#ifndef SPAN_REGEX_MAX_LEN
+#define SPAN_REGEX_MAX_LEN 1024
+#endif
+
 int span_set(span_t span, uint32_t position, uint8_t value)
 {
     int result;
@@ -388,54 +392,151 @@ result_t span_regex_is_match(span_t string, span_t pattern, span_t* matches, uin
 {
     result_t result;
 
-    if (span_is_empty(string) || span_is_empty(pattern) || 
-        matches == NULL && (size_of_matches > 0 || number_of_matches != NULL) ||
-        matches != NULL && (size_of_matches == 0 || size_of_matches > REGMATCH_ARRAY_MAX_SIZE || number_of_matches == NULL))
+    if (span_is_empty(string) || span_is_empty(pattern) ||
+        (matches == NULL && (size_of_matches > 0 || number_of_matches != NULL)) ||
+        (matches != NULL && (size_of_matches == 0 || size_of_matches > REGMATCH_ARRAY_MAX_SIZE || number_of_matches == NULL)))
     {
-        result = invalid_argument;
+        return invalid_argument;
     }
-    else if (!span_is_null_terminated(string) || !span_is_null_terminated(pattern))
+
+    /* Copy into NUL-terminated stack buffers so callers don't have to ensure
+     * null termination of the input spans. */
+    if (span_get_size(pattern) >= SPAN_REGEX_MAX_LEN ||
+        span_get_size(string)  >= SPAN_REGEX_MAX_LEN)
     {
-        result = invalid_argument;
+        return insufficient_size;
+    }
+
+    char pattern_buf[SPAN_REGEX_MAX_LEN];
+    char string_buf[SPAN_REGEX_MAX_LEN];
+
+    memcpy(pattern_buf, span_get_ptr(pattern), span_get_size(pattern));
+    pattern_buf[span_get_size(pattern)] = '\0';
+
+    memcpy(string_buf, span_get_ptr(string), span_get_size(string));
+    string_buf[span_get_size(string)] = '\0';
+
+    regex_t regex;
+
+    if (regcomp(&regex, pattern_buf, REG_EXTENDED))
+    {
+        return error;
+    }
+
+    regmatch_t pmatches[REGMATCH_ARRAY_MAX_SIZE];
+
+    if (regexec(&regex, string_buf, sizeofarray(pmatches), pmatches, 0))
+    {
+        result = not_found;
     }
     else
     {
-        regex_t regex;
-        regoff_t off, len;
-
-        if (regcomp(&regex, span_get_ptr(pattern), REG_EXTENDED))
+        if (size_of_matches > 0)
         {
-            result = error;
+            *number_of_matches = 0;
+
+            for (int i = 0; i < size_of_matches && i < REGMATCH_ARRAY_MAX_SIZE; i++)
+            {
+                if (pmatches[i].rm_so == -1) break;
+
+                /* Map back into the caller's original `string` span. */
+                matches[i] = span_slice(string, (uint32_t)pmatches[i].rm_so,
+                                                (uint32_t)(pmatches[i].rm_eo - pmatches[i].rm_so));
+                (*number_of_matches)++;
+            }
         }
-        else
+
+        result = ok;
+    }
+
+    regfree(&regex);
+
+    return result;
+}
+
+#include <assert.h>
+
+/* Static check that our opaque storage fits a real regex_t. */
+typedef char span_regex_storage_check[(sizeof(regex_t) <= sizeof(((span_regex_t*)0)->storage)) ? 1 : -1];
+
+result_t span_regex_compile(span_regex_t* regex, span_t pattern)
+{
+    if (regex == NULL || span_is_empty(pattern))
+    {
+        return invalid_argument;
+    }
+
+    if (span_get_size(pattern) >= SPAN_REGEX_MAX_LEN)
+    {
+        return insufficient_size;
+    }
+
+    char pattern_buf[SPAN_REGEX_MAX_LEN];
+    memcpy(pattern_buf, span_get_ptr(pattern), span_get_size(pattern));
+    pattern_buf[span_get_size(pattern)] = '\0';
+
+    if (regex->compiled)
+    {
+        regfree((regex_t*)regex->storage);
+        regex->compiled = false;
+    }
+
+    if (regcomp((regex_t*)regex->storage, pattern_buf, REG_EXTENDED) != 0)
+    {
+        return error;
+    }
+
+    regex->compiled = true;
+    return ok;
+}
+
+result_t span_regex_match(span_regex_t* regex, span_t string, span_t* matches, uint16_t size_of_matches, uint16_t* number_of_matches)
+{
+    if (regex == NULL || !regex->compiled || span_is_empty(string) ||
+        (matches == NULL && (size_of_matches > 0 || number_of_matches != NULL)) ||
+        (matches != NULL && (size_of_matches == 0 || size_of_matches > REGMATCH_ARRAY_MAX_SIZE || number_of_matches == NULL)))
+    {
+        return invalid_argument;
+    }
+
+    if (span_get_size(string) >= SPAN_REGEX_MAX_LEN)
+    {
+        return insufficient_size;
+    }
+
+    char string_buf[SPAN_REGEX_MAX_LEN];
+    memcpy(string_buf, span_get_ptr(string), span_get_size(string));
+    string_buf[span_get_size(string)] = '\0';
+
+    regmatch_t pmatches[REGMATCH_ARRAY_MAX_SIZE];
+
+    if (regexec((regex_t*)regex->storage, string_buf, sizeofarray(pmatches), pmatches, 0) != 0)
+    {
+        return not_found;
+    }
+
+    if (size_of_matches > 0)
+    {
+        *number_of_matches = 0;
+
+        for (int i = 0; i < size_of_matches && i < REGMATCH_ARRAY_MAX_SIZE; i++)
         {
-            regmatch_t pmatches[REGMATCH_ARRAY_MAX_SIZE];
+            if (pmatches[i].rm_so == -1) break;
 
-            if (regexec(&regex, span_get_ptr(string), sizeofarray(pmatches), pmatches, 0))
-            {
-                result = not_found;
-            }
-            else
-            {
-                if (size_of_matches > 0)
-                {
-                    *number_of_matches = 0;
-
-                    for (int i = 0; i < size_of_matches && i < REGMATCH_ARRAY_MAX_SIZE; i++)
-                    {
-                        if (pmatches[i].rm_so == -1) break;
-
-                        matches[i] = span_slice(string, pmatches[i].rm_so, pmatches[i].rm_eo - pmatches[i].rm_so);
-                        (*number_of_matches)++;
-                    }
-                }
-
-                result = ok;
-            }
-
-            regfree(&regex);
+            matches[i] = span_slice(string, (uint32_t)pmatches[i].rm_so,
+                                            (uint32_t)(pmatches[i].rm_eo - pmatches[i].rm_so));
+            (*number_of_matches)++;
         }
     }
 
-    return result;
+    return ok;
+}
+
+void span_regex_free(span_regex_t* regex)
+{
+    if (regex != NULL && regex->compiled)
+    {
+        regfree((regex_t*)regex->storage);
+        regex->compiled = false;
+    }
 }

@@ -25,8 +25,7 @@ int main()
   result += test_base64();
   result += test_hmac_sha256();
   result += test_socket();
-  
-  // result += test_task();
+  result += test_task();
 
   task_platform_deinit();
 

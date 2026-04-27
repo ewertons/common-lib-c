@@ -193,4 +193,21 @@ span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_siz
 
 result_t span_regex_is_match(span_t string, span_t pattern, span_t* matches, uint16_t size_of_matches, uint16_t* number_of_matches);
 
+/* ------------------------------------------------------------------------- *
+ * Pre-compiled regular expression. Allocates no dynamic memory of its own
+ * (the underlying POSIX `regex_t` may, but is owned by this struct and is
+ * released via #span_regex_free).
+ * ------------------------------------------------------------------------- */
+typedef struct span_regex
+{
+    bool compiled;
+    /* Opaque storage for the POSIX regex_t. Sized generously to fit any
+     * platform implementation without exposing <regex.h> in this header. */
+    unsigned char storage[256];
+} span_regex_t;
+
+result_t span_regex_compile(span_regex_t* regex, span_t pattern);
+result_t span_regex_match(span_regex_t* regex, span_t string, span_t* matches, uint16_t size_of_matches, uint16_t* number_of_matches);
+void     span_regex_free(span_regex_t* regex);
+
 #endif // SPAN_H
