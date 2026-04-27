@@ -26,6 +26,7 @@ int main()
   result += test_hmac_sha256();
   result += test_socket();
   result += test_task();
+  result += test_event_loop();
 
   task_platform_deinit();
 

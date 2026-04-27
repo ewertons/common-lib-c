@@ -13,6 +13,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/bst_redblack.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/common_lib_c.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/event_loop.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/hmac_sha256.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/logging_simple.h
@@ -30,6 +31,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/base64.c
     ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/event_loop.c
     ${CMAKE_CURRENT_LIST_DIR}/src/hmac_sha256.c
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
