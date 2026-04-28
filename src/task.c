@@ -513,3 +513,131 @@ void task_sleep_ms(uint32_t ms)
         /* retry */
     }
 }
+
+/* ------------------------------------------------------------------------- *
+ * Task completion source.
+ * ------------------------------------------------------------------------- */
+result_t task_completion_source_init(task_completion_source_t* tcs)
+{
+    if (tcs == NULL)
+    {
+        return invalid_argument;
+    }
+
+    if (pthread_mutex_init(&tcs->mutex, NULL) != 0)
+    {
+        return error;
+    }
+
+    if (pthread_cond_init(&tcs->cond, NULL) != 0)
+    {
+        (void)pthread_mutex_destroy(&tcs->mutex);
+        return error;
+    }
+
+    tcs->completed = false;
+    tcs->result    = ok;
+    return ok;
+}
+
+result_t task_completion_source_deinit(task_completion_source_t* tcs)
+{
+    if (tcs == NULL)
+    {
+        return invalid_argument;
+    }
+
+    (void)pthread_cond_destroy(&tcs->cond);
+    (void)pthread_mutex_destroy(&tcs->mutex);
+    return ok;
+}
+
+bool task_completion_source_set_result(task_completion_source_t* tcs, result_t result)
+{
+    if (tcs == NULL)
+    {
+        return false;
+    }
+
+    bool won = false;
+    (void)pthread_mutex_lock(&tcs->mutex);
+    if (!tcs->completed)
+    {
+        tcs->result    = result;
+        tcs->completed = true;
+        won = true;
+        (void)pthread_cond_broadcast(&tcs->cond);
+    }
+    (void)pthread_mutex_unlock(&tcs->mutex);
+
+    return won;
+}
+
+bool task_completion_source_is_completed(task_completion_source_t* tcs)
+{
+    if (tcs == NULL)
+    {
+        return false;
+    }
+
+    bool done;
+    (void)pthread_mutex_lock(&tcs->mutex);
+    done = tcs->completed;
+    (void)pthread_mutex_unlock(&tcs->mutex);
+    return done;
+}
+
+result_t task_completion_source_wait(task_completion_source_t* tcs)
+{
+    if (tcs == NULL)
+    {
+        return invalid_argument;
+    }
+
+    result_t r;
+    (void)pthread_mutex_lock(&tcs->mutex);
+    while (!tcs->completed)
+    {
+        (void)pthread_cond_wait(&tcs->cond, &tcs->mutex);
+    }
+    r = tcs->result;
+    (void)pthread_mutex_unlock(&tcs->mutex);
+    return r;
+}
+
+bool task_completion_source_wait_timeout(task_completion_source_t* tcs,
+                                         uint32_t                  timeout_ms,
+                                         result_t*                 out_result)
+{
+    if (tcs == NULL)
+    {
+        return false;
+    }
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec  += timeout_ms / 1000U;
+    ts.tv_nsec += (long)((timeout_ms % 1000U) * 1000000UL);
+    if (ts.tv_nsec >= 1000000000L)
+    {
+        ts.tv_sec  += 1;
+        ts.tv_nsec -= 1000000000L;
+    }
+
+    int  rc   = 0;
+    bool done = false;
+
+    (void)pthread_mutex_lock(&tcs->mutex);
+    while (!tcs->completed && rc == 0)
+    {
+        rc = pthread_cond_timedwait(&tcs->cond, &tcs->mutex, &ts);
+    }
+    done = tcs->completed;
+    if (done && out_result != NULL)
+    {
+        *out_result = tcs->result;
+    }
+    (void)pthread_mutex_unlock(&tcs->mutex);
+
+    return done;
+}

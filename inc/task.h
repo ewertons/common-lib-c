@@ -147,6 +147,67 @@ result_t task_continue_with(task_t* task, task_continuation_t continuation, void
 void task_sleep_ms(uint32_t ms);
 
 /* ------------------------------------------------------------------------- *
+ * Task completion source.
+ *
+ * A one-shot, settable rendezvous between a producer and one or more
+ * consumers. Equivalent to .NET's #TaskCompletionSource{TResult}: the
+ * producer calls #task_completion_source_set_result exactly once to
+ * publish a #result_t, and any thread blocked in
+ * #task_completion_source_wait observes that value and resumes.
+ *
+ * Use cases:
+ *   - "Server is initialised, you may now connect" handshakes from inside a
+ *     long-running task that does not itself terminate when ready.
+ *   - Promises that bridge between callback-based APIs and the synchronous
+ *     #task_wait style.
+ *
+ * Lifecycle:
+ *
+ *     task_completion_source_t tcs;
+ *     task_completion_source_init(&tcs);
+ *     ...
+ *     task_completion_source_set_result(&tcs, ok);   // producer
+ *     ...
+ *     result_t r = task_completion_source_wait(&tcs); // consumer
+ *     task_completion_source_deinit(&tcs);
+ *
+ * Threading:
+ *   - All functions are thread-safe.
+ *   - The TCS itself contains no dynamic allocation. The owner places it on
+ *     the stack or inside another struct and must outlive every waiter.
+ *   - The first #task_completion_source_set_result call wins. Subsequent
+ *     calls are no-ops and return false.
+ * ------------------------------------------------------------------------- */
+typedef struct task_completion_source
+{
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+    bool            completed;
+    result_t        result;
+} task_completion_source_t;
+
+result_t task_completion_source_init(task_completion_source_t* tcs);
+result_t task_completion_source_deinit(task_completion_source_t* tcs);
+
+/* Publish #result. Returns true on the first call, false thereafter (the
+ * stored result is left unchanged). */
+bool task_completion_source_set_result(task_completion_source_t* tcs, result_t result);
+
+/* Returns true if the source has already been signalled. */
+bool task_completion_source_is_completed(task_completion_source_t* tcs);
+
+/* Block until the source is signalled and return the stored result. Returns
+ * #invalid_argument if #tcs is NULL. */
+result_t task_completion_source_wait(task_completion_source_t* tcs);
+
+/* Block until the source is signalled or #timeout_ms elapses. On success the
+ * stored result is written to #out_result and the function returns true. On
+ * timeout the function returns false and #out_result is unchanged. */
+bool task_completion_source_wait_timeout(task_completion_source_t* tcs,
+                                         uint32_t                  timeout_ms,
+                                         result_t*                 out_result);
+
+/* ------------------------------------------------------------------------- *
  * Backward-compatible aliases for the previous, simpler API.
  * ------------------------------------------------------------------------- */
 #define task_is_cancelled(t)  task_is_cancellation_requested(t)
