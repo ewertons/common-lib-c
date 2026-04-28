@@ -9,6 +9,7 @@
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <openssl/bio.h>
+#include <openssl/x509v3.h>
 
 #include <signal.h>
 #include <stdio.h>
@@ -735,6 +736,24 @@ result_t socket_connect(socket_t *client)
 
             SSL_set_verify(client->ssl, SSL_VERIFY_PEER, NULL);
 
+            /* Bind hostname verification to the configured remote.hostname
+             * so the server cert's SAN/CN must match the name we asked to
+             * connect to. Without this, the chain is verified but any cert
+             * issued by a trusted CA would be accepted regardless of
+             * subject. */
+            if (!span_is_empty(client->remote.hostname))
+            {
+                X509_VERIFY_PARAM* vp = SSL_get0_param(client->ssl);
+                X509_VERIFY_PARAM_set_hostflags(vp,
+                    X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+                if (X509_VERIFY_PARAM_set1_host(vp,
+                        (const char*)span_get_ptr(client->remote.hostname),
+                        0) != 1)
+                {
+                    log_error("X509_VERIFY_PARAM_set1_host failed");
+                }
+            }
+
             err = SSL_set_fd(client->ssl, client->sd);
 
             if (err != 1)
@@ -1098,6 +1117,18 @@ result_t socket_connect_nb_continue(socket_t* client)
         SSL_set_fd(client->ssl, client->sd);
         SSL_set_connect_state(client->ssl);
         SSL_set_verify(client->ssl, SSL_VERIFY_PEER, NULL);
+        if (!span_is_empty(client->remote.hostname))
+        {
+            X509_VERIFY_PARAM* vp = SSL_get0_param(client->ssl);
+            X509_VERIFY_PARAM_set_hostflags(vp,
+                X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+            if (X509_VERIFY_PARAM_set1_host(vp,
+                    (const char*)span_get_ptr(client->remote.hostname),
+                    0) != 1)
+            {
+                log_error("X509_VERIFY_PARAM_set1_host failed");
+            }
+        }
         client->io_want = socket_io_want_read;
     }
     return ok;
