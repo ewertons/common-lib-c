@@ -11,5 +11,6 @@ int test_hmac_sha256();
 int test_task();
 int test_socket();
 int test_event_loop();
+int test_stringx();
 
 #endif // TESTS_H

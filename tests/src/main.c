@@ -27,6 +27,7 @@ int main()
   result += test_socket();
   result += test_task();
   result += test_event_loop();
+  result += test_stringx();
 
   task_platform_deinit();
 

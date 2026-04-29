@@ -154,6 +154,56 @@ static void hmac_sha256_get_hash_random_test_1_success(void** state)
     assert_memory_equal(expected_hash, span_get_ptr(hash), span_get_size(hash));
 }
 
+static void sha_hash_to_hex_string_success(void** state)
+{
+    (void)state;
+
+    uint8_t hash_raw[] = { 0x00, 0xff, 0xab, 0x10 };
+    char    str_raw[64] = { 0 };
+    span_t  hash = span_from_memory(hash_raw);
+    span_t  str = span_init((uint8_t*)str_raw, sizeof(str_raw));
+    span_t  out;
+
+    sha_hash_to_hex_string(hash, str, &out);
+
+    assert_int_equal(8, span_get_size(out));
+    assert_memory_equal("00ffab10", span_get_ptr(out), 8);
+    /* Buffer should be NUL-terminated past the data. */
+    assert_int_equal(0, str_raw[8]);
+}
+
+static void sha_hash_to_hex_string_partial_buffer_success(void** state)
+{
+    (void)state;
+
+    uint8_t hash_raw[] = { 0xde, 0xad };
+    char    str_raw[16] = { 0 };
+    span_t  hash = span_from_memory(hash_raw);
+    span_t  str = span_init((uint8_t*)str_raw, sizeof(str_raw));
+    span_t  out;
+
+    sha_hash_to_hex_string(hash, str, &out);
+
+    assert_int_equal(4, span_get_size(out));
+    assert_memory_equal("dead", span_get_ptr(out), 4);
+}
+
+static void hmac_sha256_get_hash_without_out_hash_success(void** state)
+{
+    (void)state;
+
+    uint8_t key_raw[] = { 'k' };
+    uint8_t data_raw[] = { 'd', 'a', 't', 'a' };
+    uint8_t buf_raw[64];
+
+    span_t key = span_from_memory(key_raw);
+    span_t data = span_from_memory(data_raw);
+    span_t buf = span_from_memory(buf_raw);
+
+    /* out_hash NULL: function must succeed and write into buf. */
+    assert_int_equal(0, hmac_sha256_get_hash(key, data, buf, NULL));
+}
+
 int test_hmac_sha256()
 {
   const struct CMUnitTest tests[] = {
@@ -164,7 +214,10 @@ int test_hmac_sha256()
       // cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_5_success), // needs debugging.
       cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_6_success),
       cmocka_unit_test(hmac_sha256_get_hash_rfc4231_test_case_7_success),
-      cmocka_unit_test(hmac_sha256_get_hash_random_test_1_success)
+      cmocka_unit_test(hmac_sha256_get_hash_random_test_1_success),
+      cmocka_unit_test(sha_hash_to_hex_string_success),
+      cmocka_unit_test(sha_hash_to_hex_string_partial_buffer_success),
+      cmocka_unit_test(hmac_sha256_get_hash_without_out_hash_success),
   };
 
   return cmocka_run_group_tests_name("hmac_sha256_tests", tests, NULL, NULL);
