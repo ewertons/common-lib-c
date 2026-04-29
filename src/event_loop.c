@@ -246,7 +246,13 @@ result_t event_loop_run_once(event_loop_t* loop, int timeout_ms)
         if (fd == loop->wakefd)
         {
             uint64_t drain;
-            (void)read(loop->wakefd, &drain, sizeof(drain));
+            /* Drain the eventfd. We don't care how much was queued --
+             * the wake is purely a kick to re-evaluate stop_requested.
+             * glibc marks read() warn_unused_result, so swallow it via
+             * an explicit branch rather than the (void) cast (which the
+             * attribute ignores). */
+            ssize_t r = read(loop->wakefd, &drain, sizeof(drain));
+            (void)r;
             continue;
         }
 
@@ -310,7 +316,12 @@ result_t event_loop_stop(event_loop_t* loop)
     if (loop->wakefd != -1)
     {
         uint64_t one = 1;
-        (void)write(loop->wakefd, &one, sizeof(one));
+        /* Best-effort wake. If write fails the loop will still wake on
+         * its next event or timeout. glibc marks write() warn_unused_-
+         * result, so capture into a discarded local rather than (void)
+         * cast (which the attribute ignores). */
+        ssize_t w = write(loop->wakefd, &one, sizeof(one));
+        (void)w;
     }
     return ok;
 }
