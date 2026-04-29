@@ -28,6 +28,49 @@
 #define SOCKET_LISTEN_BACKLOG 128
 #endif
 
+/* ------------------------------------------------------------------------- *
+ * OpenSSL backend.
+ *
+ * The opaque #tls_backend handle declared in socket.h is defined here so
+ * that the OpenSSL types (SSL, SSL_CTX, X509) never leak into the public
+ * surface. A future mbedtls backend would live in its own translation
+ * unit and provide a different definition of the same struct -- the
+ * library is built with exactly one TLS backend linked in.
+ *
+ * We allocate one of these on demand for any socket that has tls.enabled
+ * set; plain-TCP sockets keep `tls.backend == NULL`.
+ * ------------------------------------------------------------------------- */
+struct tls_backend
+{
+    SSL_CTX* ctx;
+    SSL*     ssl;
+};
+
+static struct tls_backend* tls_backend_new(void)
+{
+    struct tls_backend* b = (struct tls_backend*)calloc(1, sizeof(*b));
+    return b;
+}
+
+static void tls_backend_destroy(struct tls_backend** pb)
+{
+    if (pb == NULL || *pb == NULL) return;
+    struct tls_backend* b = *pb;
+    if (b->ssl != NULL)
+    {
+        (void)SSL_shutdown(b->ssl);
+        SSL_free(b->ssl);
+        b->ssl = NULL;
+    }
+    if (b->ctx != NULL)
+    {
+        SSL_CTX_free(b->ctx);
+        b->ctx = NULL;
+    }
+    free(b);
+    *pb = NULL;
+}
+
 static bool is_socket_library_initialized = false;
 
 /* Reset all file descriptors to -1 so that an early socket_deinit does not
@@ -410,7 +453,7 @@ static void SSL_debug(int write_p, int version,
     printf("\n");
 }
 
-result_t socket_init(socket_t *ssl1, socket_config_t *config)
+result_t socket_init(socket_t *s, socket_config_t *config)
 {
     if (!is_socket_library_initialized)
     {
@@ -424,70 +467,80 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
     int socket_result;
     const SSL_METHOD *ssl_method = (config->role == socket_role_server ? TLS_server_method() : TLS_client_method());
 
-    (void)memset(ssl1, 0, sizeof(socket_t));
-    socket_clear_fds(ssl1);
+    (void)memset(s, 0, sizeof(socket_t));
+    socket_clear_fds(s);
 
-    ssl1->role = config->role;
-    ssl1->local = config->local;
-    ssl1->remote = config->remote;
-    ssl1->ctx = SSL_CTX_new(ssl_method);
+    s->role        = config->role;
+    s->local       = config->local;
+    s->remote      = config->remote;
+    s->tls.enabled = config->tls.enable;
 
-    if (ssl1->ctx == NULL)
+    if (s->tls.enabled)
     {
-        return error;
-    }
-    
-    if (config->tls.trusted_certificate_file != NULL &&
-        SSL_CTX_load_verify_locations(ssl1->ctx, config->tls.trusted_certificate_file, NULL) != 1)
-    {
-        log_error("SSL_CTX_load_verify_locations failed");
-        return error;
-    }
-
-    if (config->tls.certificate_file != NULL &&
-        SSL_CTX_use_certificate_file(ssl1->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
-    {
-        log_error("SSL_CTX_use_certificate_file failed");
-        return error;
-    }
-
-    if (config->tls.private_key_file != NULL)
-    {
-        if (SSL_CTX_use_PrivateKey_file(ssl1->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0)
+        s->tls.backend = tls_backend_new();
+        if (s->tls.backend == NULL)
         {
-            log_error("SSL_CTX_use_PrivateKey_file failed");
+            return error;
+        }
+        s->tls.backend->ctx = SSL_CTX_new(ssl_method);
+
+        if (s->tls.backend->ctx == NULL)
+        {
             return error;
         }
 
-        if (!SSL_CTX_check_private_key(ssl1->ctx))
+        if (config->tls.trusted_certificate_file != NULL &&
+            SSL_CTX_load_verify_locations(s->tls.backend->ctx, config->tls.trusted_certificate_file, NULL) != 1)
         {
-            log_error("Private key does not match the certificate public key");
+            log_error("SSL_CTX_load_verify_locations failed");
             return error;
+        }
+
+        if (config->tls.certificate_file != NULL &&
+            SSL_CTX_use_certificate_file(s->tls.backend->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
+        {
+            log_error("SSL_CTX_use_certificate_file failed");
+            return error;
+        }
+
+        if (config->tls.private_key_file != NULL)
+        {
+            if (SSL_CTX_use_PrivateKey_file(s->tls.backend->ctx, config->tls.private_key_file, SSL_FILETYPE_PEM) <= 0)
+            {
+                log_error("SSL_CTX_use_PrivateKey_file failed");
+                return error;
+            }
+
+            if (!SSL_CTX_check_private_key(s->tls.backend->ctx))
+            {
+                log_error("Private key does not match the certificate public key");
+                return error;
+            }
         }
     }
 
     if (config->role == socket_role_server)
     {
-        ssl1->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
+        s->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
 
-        if (ssl1->listen_sd == -1)
+        if (s->listen_sd == -1)
         {
             return error;
         }
 
         /* Allow rapid restarts of the listener. */
         int reuse = 1;
-        (void)setsockopt(ssl1->listen_sd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_REUSEPORT
-        (void)setsockopt(ssl1->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+        (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
 #endif
 
-        memset(&ssl1->sa_serv, '\0', sizeof(ssl1->sa_serv));
-        ssl1->sa_serv.sin_family = AF_INET;
-        ssl1->sa_serv.sin_addr.s_addr = INADDR_ANY;
-        ssl1->sa_serv.sin_port = htons(config->local.port); /* Server Port number */
+        memset(&s->sa_serv, '\0', sizeof(s->sa_serv));
+        s->sa_serv.sin_family = AF_INET;
+        s->sa_serv.sin_addr.s_addr = INADDR_ANY;
+        s->sa_serv.sin_port = htons(config->local.port); /* Server Port number */
 
-        socket_result = bind(ssl1->listen_sd, (struct sockaddr *)&ssl1->sa_serv, sizeof(ssl1->sa_serv));
+        socket_result = bind(s->listen_sd, (struct sockaddr *)&s->sa_serv, sizeof(s->sa_serv));
 
         if (socket_result == -1)
         {
@@ -495,7 +548,7 @@ result_t socket_init(socket_t *ssl1, socket_config_t *config)
             return error;
         }
 
-        socket_result = listen(ssl1->listen_sd, SOCKET_LISTEN_BACKLOG);
+        socket_result = listen(s->listen_sd, SOCKET_LISTEN_BACKLOG);
 
         if (socket_result == -1)
         {
@@ -523,18 +576,7 @@ result_t socket_deinit(socket_t *socket)
     }
     else
     {
-        if (socket->ssl != NULL)
-        {
-            (void)SSL_shutdown(socket->ssl);
-            SSL_free(socket->ssl);
-            socket->ssl = NULL;
-        }
-
-        if (socket->ctx != NULL)
-        {
-            SSL_CTX_free(socket->ctx);
-            socket->ctx = NULL;
-        }
+        tls_backend_destroy(&socket->tls.backend);
 
         if (socket->listen_sd != -1)
         {
@@ -616,32 +658,47 @@ result_t socket_accept(socket_t *server, socket_t *client)
     inet_ntop(AF_INET, &client->sa_cli.sin_addr.s_addr, buffer, sizeof(buffer));
     log_info("Connection from %s:%d", buffer, ntohs(client->sa_cli.sin_port));
 
+    /* Inherit TLS-or-not from the listening socket. */
+    client->tls.enabled = server->tls.enabled;
+
+    if (!client->tls.enabled)
+    {
+        /* Plain TCP -- nothing more to do. */
+        return ok;
+    }
+
     /* ----------------------------------------------- */
     /* TCP connection is ready. Do server side SSL. */
 
-    client->ssl = SSL_new(server->ctx);
+    client->tls.backend = tls_backend_new();
+    if (client->tls.backend == NULL)
+    {
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+    client->tls.backend->ssl = SSL_new(server->tls.backend->ctx);
 
-    SSL_set_fd(client->ssl, client->sd);
+    SSL_set_fd(client->tls.backend->ssl, client->sd);
 
-    err = SSL_accept(client->ssl);
+    err = SSL_accept(client->tls.backend->ssl);
 
     if (err != 1)
     {
-        socket_error(client->ssl, err);
+        socket_error(client->tls.backend->ssl, err);
         log_error("SSL_accept (%s)", strerror(errno));
-        SSL_free(client->ssl);
-        client->ssl = NULL;
+        tls_backend_destroy(&client->tls.backend);
         close(client->sd);
         client->sd = -1;
         result = error;
     }
     else
     {
-        log_info("SSL connection using %s", SSL_get_cipher(client->ssl));
+        log_info("SSL connection using %s", SSL_get_cipher(client->tls.backend->ssl));
 
         /* Get client's certificate */
 
-        check_peer_certificates(client->ssl, "client");
+        check_peer_certificates(client->tls.backend->ssl, "client");
 
         result = ok;
     }
@@ -732,9 +789,18 @@ result_t socket_connect(socket_t *client)
         {
             client->sd = sockfd;
 
-            client->ssl = SSL_new(client->ctx);
+            if (!client->tls.enabled)
+            {
+                /* Plain TCP -- skip the entire SSL setup below. */
+                result = ok;
+            }
+            else
+            {
+            /* socket_init already allocated the TLS backend and ctx for
+             * this client; we just attach a new SSL session to that ctx. */
+            client->tls.backend->ssl = SSL_new(client->tls.backend->ctx);
 
-            SSL_set_verify(client->ssl, SSL_VERIFY_PEER, NULL);
+            SSL_set_verify(client->tls.backend->ssl, SSL_VERIFY_PEER, NULL);
 
             /* Bind hostname verification to the configured remote.hostname
              * so the server cert's SAN/CN must match the name we asked to
@@ -743,7 +809,7 @@ result_t socket_connect(socket_t *client)
              * subject. */
             if (!span_is_empty(client->remote.hostname))
             {
-                X509_VERIFY_PARAM* vp = SSL_get0_param(client->ssl);
+                X509_VERIFY_PARAM* vp = SSL_get0_param(client->tls.backend->ssl);
                 X509_VERIFY_PARAM_set_hostflags(vp,
                     X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
                 if (X509_VERIFY_PARAM_set1_host(vp,
@@ -754,13 +820,13 @@ result_t socket_connect(socket_t *client)
                 }
             }
 
-            err = SSL_set_fd(client->ssl, client->sd);
+            err = SSL_set_fd(client->tls.backend->ssl, client->sd);
 
             if (err != 1)
             {
-                socket_error(client->ssl, err);
-                SSL_free(client->ssl);
-                client->ssl = NULL;
+                socket_error(client->tls.backend->ssl, err);
+                SSL_free(client->tls.backend->ssl);
+                client->tls.backend->ssl = NULL;
                 close(client->sd);
                 client->sd = -1;
                 result = error;
@@ -768,11 +834,11 @@ result_t socket_connect(socket_t *client)
             else
             {
                 ERR_clear_error();
-                err = SSL_connect(client->ssl);
+                err = SSL_connect(client->tls.backend->ssl);
 
                 if (err != SSL_DO_HANDSHAKE_SUCCESS)
                 {
-                    int ssl_err = SSL_get_error(client->ssl, err);
+                    int ssl_err = SSL_get_error(client->tls.backend->ssl, err);
 
                     if (ssl_err == SSL_ERROR_SSL)
                     {
@@ -783,38 +849,70 @@ result_t socket_connect(socket_t *client)
                         log_error("SSL handshake failed: %d", ssl_err);
                     }
 
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
+                    SSL_free(client->tls.backend->ssl);
+                    client->tls.backend->ssl = NULL;
                     close(client->sd);
                     client->sd = -1;
                     result = error;
                 }
                 else
                 {
-                    log_info("SSL_get_verify_result=%ld", SSL_get_verify_result(client->ssl));
-                    check_peer_certificates(client->ssl, "server");
+                    log_info("SSL_get_verify_result=%ld", SSL_get_verify_result(client->tls.backend->ssl));
+                    check_peer_certificates(client->tls.backend->ssl, "server");
                     result = ok;
                 }
             }
+            } /* end of TLS-enabled branch */
         }
     }
 
     return result;
 }
 
-result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read, span_t* remainder)
+result_t socket_read(socket_t *s, span_t buffer, span_t *out_read, span_t* remainder)
 {
     result_t result;
 
-    if (ssl1 == NULL || out_read == NULL)
+    if (s == NULL || out_read == NULL)
     {
         result = invalid_argument;
+    }
+    else if (!s->tls.enabled)
+    {
+        /* Plain TCP read. recv() returns 0 on orderly shutdown. */
+        ssize_t bytes_read = recv(s->sd, span_get_ptr(buffer),
+                                  span_get_size(buffer), 0);
+        if (bytes_read > 0)
+        {
+            *out_read = span_slice(buffer, 0, (uint32_t)bytes_read);
+            if (remainder != NULL)
+            {
+                *remainder = span_slice_to_end(buffer, (uint32_t)bytes_read);
+            }
+            result = ok;
+        }
+        else if (bytes_read == 0)
+        {
+            result = end_of_data;
+        }
+        else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
+            if (remainder != NULL)
+            {
+                *remainder = buffer;
+            }
+            result = try_again;
+        }
+        else
+        {
+            result = error;
+        }
     }
     else
     {
         int bytes_read;
 
-        bytes_read = SSL_read(ssl1->ssl, span_get_ptr(buffer), span_get_size(buffer));
+        bytes_read = SSL_read(s->tls.backend->ssl, span_get_ptr(buffer), span_get_size(buffer));
 
         if (bytes_read > 0)
         {
@@ -829,7 +927,7 @@ result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read, span_t* re
         }
         else
         {
-            int reason = SSL_get_error(ssl1->ssl, bytes_read);
+            int reason = SSL_get_error(s->tls.backend->ssl, bytes_read);
 
             switch (reason)
             {
@@ -856,13 +954,30 @@ result_t socket_read(socket_t *ssl1, span_t buffer, span_t *out_read, span_t* re
     return result;
 }
 
-result_t socket_write(socket_t *ssl1, span_t data)
+result_t socket_write(socket_t *s, span_t data)
 {
     result_t result;
 
-    if (ssl1 == NULL)
+    if (s == NULL)
     {
         result = invalid_argument;
+    }
+    else if (!s->tls.enabled)
+    {
+        result = ok;
+        while (span_get_size(data) > 0)
+        {
+            ssize_t n = send(s->sd, span_get_ptr(data),
+                             span_get_size(data), 0);
+            if (n <= 0)
+            {
+                if (n < 0 && errno == EINTR) continue;
+                result = error;
+                log_error("send (%s)", strerror(errno));
+                break;
+            }
+            data = span_slice_to_end(data, (uint32_t)n);
+        }
     }
     else
     {
@@ -870,12 +985,12 @@ result_t socket_write(socket_t *ssl1, span_t data)
 
         while (span_get_size(data) > 0)
         {
-            int n = SSL_write(ssl1->ssl, span_get_ptr(data), span_get_size(data));
+            int n = SSL_write(s->tls.backend->ssl, span_get_ptr(data), span_get_size(data));
 
             if (n <= 0)
             {
                 result = error;
-                log_error("SSL_write (ssl_err=%d errno=%s)", SSL_get_error(ssl1->ssl, n), strerror(errno));
+                log_error("SSL_write (ssl_err=%d errno=%s)", SSL_get_error(s->tls.backend->ssl, n), strerror(errno));
                 break;
             }
             else
@@ -944,6 +1059,7 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
 
     client->sd  = sd;
     client->role = socket_role_server; /* server-side endpoint of an accepted connection */
+    client->tls.enabled = server->tls.enabled;
 
     /* Switch to non-blocking before the TLS handshake so SSL_accept reports
      * WANT_READ / WANT_WRITE instead of blocking. */
@@ -954,19 +1070,36 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
         return error;
     }
 
+    if (!client->tls.enabled)
+    {
+        /* Plain TCP -- no handshake required. */
+        client->tcp_connected      = true;
+        client->tls.handshake_done = true;
+        client->io_want            = socket_io_want_read;
+        return ok;
+    }
+
     /* Prime the TLS handshake. The caller must drive socket_handshake_nb
      * until it returns ok. */
-    client->ssl = SSL_new(server->ctx);
-    if (client->ssl == NULL)
+    client->tls.backend = tls_backend_new();
+    if (client->tls.backend == NULL)
     {
         close(sd);
         client->sd = -1;
         return error;
     }
-    SSL_set_fd(client->ssl, sd);
-    SSL_set_accept_state(client->ssl);
+    client->tls.backend->ssl = SSL_new(server->tls.backend->ctx);
+    if (client->tls.backend->ssl == NULL)
+    {
+        tls_backend_destroy(&client->tls.backend);
+        close(sd);
+        client->sd = -1;
+        return error;
+    }
+    SSL_set_fd(client->tls.backend->ssl, sd);
+    SSL_set_accept_state(client->tls.backend->ssl);
     client->tcp_connected      = true;
-    client->tls_handshake_done = false;
+    client->tls.handshake_done = false;
     client->io_want            = socket_io_want_read;
 
     return ok;
@@ -974,26 +1107,38 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
 
 result_t socket_handshake_nb(socket_t* s)
 {
-    if (s == NULL || s->ssl == NULL)
+    if (s == NULL)
     {
         return invalid_argument;
     }
-    if (s->tls_handshake_done)
+    if (!s->tls.enabled)
+    {
+        /* Nothing to do for plain TCP -- TCP is already connected by the
+         * time we get here. */
+        s->tls.handshake_done = true;
+        s->io_want            = 0;
+        return ok;
+    }
+    if (s->tls.backend == NULL || s->tls.backend->ssl == NULL)
+    {
+        return invalid_argument;
+    }
+    if (s->tls.handshake_done)
     {
         s->io_want = 0;
         return ok;
     }
 
     ERR_clear_error();
-    int rc = SSL_do_handshake(s->ssl);
+    int rc = SSL_do_handshake(s->tls.backend->ssl);
     if (rc == 1)
     {
-        s->tls_handshake_done = true;
+        s->tls.handshake_done = true;
         s->io_want            = 0;
         return ok;
     }
 
-    int sslerr = SSL_get_error(s->ssl, rc);
+    int sslerr = SSL_get_error(s->tls.backend->ssl, rc);
     switch (sslerr)
     {
         case SSL_ERROR_WANT_READ:
@@ -1107,19 +1252,29 @@ result_t socket_connect_nb_continue(socket_t* client)
     }
 
     /* Initialize TLS state on first call after TCP is up. */
-    if (client->ssl == NULL)
+    if (!client->tls.enabled)
     {
-        client->ssl = SSL_new(client->ctx);
-        if (client->ssl == NULL)
+        client->tls.handshake_done = true;
+        client->io_want            = 0;
+        return ok;
+    }
+    if (client->tls.backend == NULL)
+    {
+        return error;
+    }
+    if (client->tls.backend->ssl == NULL)
+    {
+        client->tls.backend->ssl = SSL_new(client->tls.backend->ctx);
+        if (client->tls.backend->ssl == NULL)
         {
             return error;
         }
-        SSL_set_fd(client->ssl, client->sd);
-        SSL_set_connect_state(client->ssl);
-        SSL_set_verify(client->ssl, SSL_VERIFY_PEER, NULL);
+        SSL_set_fd(client->tls.backend->ssl, client->sd);
+        SSL_set_connect_state(client->tls.backend->ssl);
+        SSL_set_verify(client->tls.backend->ssl, SSL_VERIFY_PEER, NULL);
         if (!span_is_empty(client->remote.hostname))
         {
-            X509_VERIFY_PARAM* vp = SSL_get0_param(client->ssl);
+            X509_VERIFY_PARAM* vp = SSL_get0_param(client->tls.backend->ssl);
             X509_VERIFY_PARAM_set_hostflags(vp,
                 X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
             if (X509_VERIFY_PARAM_set1_host(vp,
@@ -1148,8 +1303,32 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
         return ok;
     }
 
+    if (!s->tls.enabled)
+    {
+        ssize_t n = send(s->sd, span_get_ptr(data),
+                         span_get_size(data), 0);
+        if (n > 0)
+        {
+            *out_written = (uint32_t)n;
+            if ((uint32_t)n == span_get_size(data))
+            {
+                s->io_want = 0;
+                return ok;
+            }
+            s->io_want = socket_io_want_write;
+            return try_again;
+        }
+        if (n == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+        {
+            s->io_want = socket_io_want_write;
+            return try_again;
+        }
+        log_error("send_nb (%s)", strerror(errno));
+        return error;
+    }
+
     ERR_clear_error();
-    int n = SSL_write(s->ssl, span_get_ptr(data), (int)span_get_size(data));
+    int n = SSL_write(s->tls.backend->ssl, span_get_ptr(data), (int)span_get_size(data));
     if (n > 0)
     {
         *out_written = (uint32_t)n;
@@ -1163,7 +1342,7 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
         return try_again;
     }
 
-    int sslerr = SSL_get_error(s->ssl, n);
+    int sslerr = SSL_get_error(s->tls.backend->ssl, n);
     switch (sslerr)
     {
         case SSL_ERROR_WANT_READ:
@@ -1174,6 +1353,72 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
             return try_again;
         default:
             log_error("SSL_write_nb (ssl_err=%d errno=%s)",
+                      sslerr, strerror(errno));
+            return error;
+    }
+}
+
+result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
+                        uint32_t* out_received)
+{
+    if (s == NULL || dst == NULL || out_received == NULL)
+    {
+        return invalid_argument;
+    }
+    *out_received = 0;
+    if (cap == 0)
+    {
+        return ok;
+    }
+
+    if (!s->tls.enabled)
+    {
+        ssize_t r = recv(s->sd, dst, (size_t)cap, 0);
+        if (r > 0)
+        {
+            *out_received = (uint32_t)r;
+            s->io_want    = 0;
+            return ok;
+        }
+        if (r == 0)
+        {
+            return end_of_data;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
+            s->io_want = socket_io_want_read;
+            return try_again;
+        }
+        log_error("recv_nb (%s)", strerror(errno));
+        return error;
+    }
+
+    if (s->tls.backend == NULL || s->tls.backend->ssl == NULL)
+    {
+        return invalid_argument;
+    }
+
+    ERR_clear_error();
+    int n = SSL_read(s->tls.backend->ssl, dst, (int)cap);
+    if (n > 0)
+    {
+        *out_received = (uint32_t)n;
+        s->io_want    = 0;
+        return ok;
+    }
+    int sslerr = SSL_get_error(s->tls.backend->ssl, n);
+    switch (sslerr)
+    {
+        case SSL_ERROR_WANT_READ:
+            s->io_want = socket_io_want_read;
+            return try_again;
+        case SSL_ERROR_WANT_WRITE:
+            s->io_want = socket_io_want_write;
+            return try_again;
+        case SSL_ERROR_ZERO_RETURN:
+            return end_of_data;
+        default:
+            log_error("SSL_read_nb (ssl_err=%d errno=%s)",
                       sslerr, strerror(errno));
             return error;
     }
