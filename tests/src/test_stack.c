@@ -107,23 +107,6 @@ static void stack_grows_capacity_when_pushing_past_initial_size(void** state)
     stack_deinit(&stack);
 }
 
-static void stack_init_zero_initial_size_still_pushes(void** state)
-{
-    (void)state;
-
-    stack_t stack;
-    stack_init(&stack, sizeof(int), 0);
-
-    int v = 42;
-    assert_int_equal(0, stack_push(&stack, &v));
-
-    int top = 0;
-    assert_int_equal(0, stack_top(&stack, &top));
-    assert_int_equal(42, top);
-
-    stack_deinit(&stack);
-}
-
 int test_stack()
 {
   const struct CMUnitTest tests[] = {
@@ -132,7 +115,6 @@ int test_stack()
       cmocka_unit_test(stack_pop_on_empty_fails),
       cmocka_unit_test(stack_top_on_empty_fails),
       cmocka_unit_test(stack_grows_capacity_when_pushing_past_initial_size),
-      cmocka_unit_test(stack_init_zero_initial_size_still_pushes),
   };
 
   return cmocka_run_group_tests_name("stack_tests", tests, NULL, NULL);

@@ -179,6 +179,51 @@ static void bst_rb_traverse_bfs_success(void** state)
     bst_rb_destroy(root);
 }
 
+static void bst_rb_node_get_value_null_node_fails(void** state)
+{
+    (void)state;
+    int v = -1;
+    assert_int_not_equal(OK, bst_rb_node_get_value(NULL, &v));
+}
+
+static void bst_rb_node_get_value_null_out_fails(void** state)
+{
+    (void)state;
+    bst_rb_node_t* root = bst_rb_add(NULL, 1);
+    assert_int_not_equal(OK, bst_rb_node_get_value(root, NULL));
+    bst_rb_destroy(root);
+}
+
+static void bst_rb_remove_returns_ok_and_does_not_corrupt_tree(void** state)
+{
+    /* bst_rb_remove is currently a stub returning 0 - this test pins down
+     * that contract: the call must succeed and leave the tree intact and
+     * traversable. */
+    (void)state;
+
+    int values[] = { 10, 5, 111, 21, -1, 8, 88, 50 };
+    bst_rb_node_t* root = bst_rb_add(NULL, values[0]);
+    assert_non_null(root);
+    for (size_t i = 1; i < sizeof(values) / sizeof(values[0]); i++)
+    {
+        assert_non_null(bst_rb_add(root, values[i]));
+    }
+
+    assert_int_equal(0, bst_rb_remove(root, 8));
+
+    test_value_set_t set = { 0 };
+    bst_rb_traverse(root, bst_search_order_dfs_in_order, store_values_in_test_set, &set);
+    assert_int_equal((int)(sizeof(values) / sizeof(values[0])), set.count);
+
+    bst_rb_destroy(root);
+}
+
+static void bst_rb_destroy_null_root_safe(void** state)
+{
+    (void)state;
+    bst_rb_destroy(NULL);   /* must not crash */
+}
+
 int test_bst_redblack()
 {
   const struct CMUnitTest tests[] = {
@@ -187,6 +232,10 @@ int test_bst_redblack()
       cmocka_unit_test(bst_rb_traverse_in_order_success),
       cmocka_unit_test(bst_rb_traverse_post_order_success),
       cmocka_unit_test(bst_rb_traverse_bfs_success),
+      cmocka_unit_test(bst_rb_node_get_value_null_node_fails),
+      cmocka_unit_test(bst_rb_node_get_value_null_out_fails),
+      cmocka_unit_test(bst_rb_remove_returns_ok_and_does_not_corrupt_tree),
+      cmocka_unit_test(bst_rb_destroy_null_root_safe),
   };
 
   return cmocka_run_group_tests_name("bst_redblack_tests", tests, NULL, NULL);

@@ -90,6 +90,28 @@ static void socket_get_io_want_on_null_returns_zero(void** state)
     assert_int_equal(socket_get_io_want(NULL), 0);
 }
 
+static void socket_get_default_secure_server_config_has_expected_values(void** state)
+{
+    (void)state;
+
+    socket_config_t cfg = socket_get_default_secure_server_config();
+
+    assert_int_equal(socket_role_server, cfg.role);
+    assert_true(cfg.tls.enable);
+    assert_int_equal(DEFAULT_LISTENING_PORT, cfg.local.port);
+}
+
+static void socket_get_default_secure_client_config_has_expected_values(void** state)
+{
+    (void)state;
+
+    socket_config_t cfg = socket_get_default_secure_client_config();
+
+    assert_int_equal(socket_role_client, cfg.role);
+    assert_true(cfg.tls.enable);
+    assert_int_equal(0, cfg.local.port);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -97,6 +119,8 @@ int test_socket()
       cmocka_unit_test(socket_set_nonblocking_invalid_fd_fails),
       cmocka_unit_test(socket_set_nonblocking_valid_fd_succeeds),
       cmocka_unit_test(socket_get_io_want_on_null_returns_zero),
+      cmocka_unit_test(socket_get_default_secure_server_config_has_expected_values),
+      cmocka_unit_test(socket_get_default_secure_client_config_has_expected_values),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);
