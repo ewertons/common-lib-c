@@ -177,6 +177,79 @@ result_t json_reader_next_token(json_reader_t* reader);
  */
 result_t json_reader_skip_children(json_reader_t* reader);
 
+/**
+ * @brief Resets the reader to its initial state, as if json_reader_init had
+ *        just been called with the same buffer. Useful when a caller needs
+ *        to scan an in-memory JSON document multiple times (e.g. to look up
+ *        several top-level properties without keeping the source span on
+ *        the side).
+ *
+ * @retval ok                Reader rewound.
+ * @retval invalid_argument  reader is NULL.
+ */
+result_t json_reader_rewind(json_reader_t* reader);
+
+/* ====================== READER CONVENIENCE HELPERS ======================= */
+
+/**
+ * @brief Locates a named property on the *current object* and leaves the
+ *        reader positioned ON its value token.
+ *
+ * Preconditions:
+ *   - The most recent successful read produced a json_token_begin_object
+ *     for the object to scan, OR the reader is positioned just after one
+ *     (i.e. about to emit the first property name).
+ *
+ * Behaviour:
+ *   - Walks property/value pairs forward, calling json_reader_skip_children
+ *     on values that don't match. Comparison is on the unescaped property
+ *     name (via json_token_is_text_equal).
+ *   - On match, fills `*out_value` with a copy of `reader->token`.
+ *   - On miss, consumes the closing json_token_end_object and returns
+ *     `not_found`. The reader is left pointing at the end-object token.
+ *
+ * @retval ok                Property found; reader on the value.
+ * @retval not_found         Property absent; reader at end-of-object.
+ * @retval invalid_argument  reader or out_value is NULL.
+ * @retval unexpected_char   Reader was not on an object structure.
+ * @retval (other)           Propagated from json_reader_next_token /
+ *                           json_reader_skip_children.
+ */
+result_t json_reader_find_property(json_reader_t* reader,
+                                   span_t name,
+                                   json_token_t* out_value);
+
+/**
+ * @brief Visitor callback for json_reader_for_each_array_element.
+ *
+ * Invoked once per element. On entry, `reader->token` is the element's
+ * first token (begin_object, begin_array, string, number, true/false/null).
+ * The callback may consume as much or as little of the element as it
+ * wishes; the iterator will drain any tokens the callback left unread
+ * before reading the next element. Returning anything other than `ok`
+ * aborts iteration and the value is propagated to the caller.
+ */
+typedef result_t (*json_array_visitor_fn)(json_reader_t* reader,
+                                          uint32_t index,
+                                          void* ctx);
+
+/**
+ * @brief Iterates the *current array*, invoking `cb` once per element.
+ *
+ * Preconditions:
+ *   - `reader->token.kind == json_token_begin_array`.
+ *
+ * On return the reader is positioned on the matching end_array token.
+ *
+ * @retval ok                Array fully iterated.
+ * @retval invalid_argument  reader or cb is NULL.
+ * @retval invalid_state     reader is not on a begin_array.
+ * @retval (other)           Propagated from the visitor or the reader.
+ */
+result_t json_reader_for_each_array_element(json_reader_t* reader,
+                                            json_array_visitor_fn cb,
+                                            void* ctx);
+
 /* ============================== TOKEN GETTERS ============================ */
 
 /**
@@ -221,6 +294,24 @@ result_t json_token_get_double(json_token_t const* token, double* out_value);
  * @retval unexpected_char       Malformed escape sequence in token.
  */
 result_t json_token_get_string(json_token_t const* token, span_t destination, uint32_t* out_length);
+
+/**
+ * @brief span_t-friendly variant of json_token_get_string. Copies the
+ *        unescaped UTF-8 string into `destination` and reports the slice
+ *        actually written through `out_written`. NUL-termination is NOT
+ *        guaranteed (the returned slice describes exact length).
+ *
+ * @param[out] out_written   Optional. Set to span_slice(destination, 0, n)
+ *                           where n is the unescaped byte count.
+ *
+ * @retval ok                    String copied.
+ * @retval invalid_state         Token is not a string.
+ * @retval insufficient_size     `destination` is too small.
+ * @retval unexpected_char       Malformed escape sequence in token.
+ */
+result_t json_token_get_string_span(json_token_t const* token,
+                                    span_t destination,
+                                    span_t* out_written);
 
 /**
  * @brief Compares the unescaped string content of a json_token_string or

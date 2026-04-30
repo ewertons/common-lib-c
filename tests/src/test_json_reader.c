@@ -221,6 +221,161 @@ static void reader_writer_round_trip(void** state)
     assert_int_equal(json_reader_done, json_reader_next_token(&r));
 }
 
+/* ---------------------- new helpers ---------------------- */
+
+static void reader_rewind_works(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    assert_int_equal(ok, json_reader_init(&r, S("[1,2,3]"), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));
+    assert_int_equal(json_token_begin_array, r.token.kind);
+    assert_int_equal(ok, json_reader_next_token(&r));
+    assert_int_equal(json_token_number,      r.token.kind);
+
+    assert_int_equal(ok, json_reader_rewind(&r));
+    assert_int_equal(ok, json_reader_next_token(&r));
+    assert_int_equal(json_token_begin_array, r.token.kind);
+}
+
+static void reader_find_property_present(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    json_token_t  v;
+    assert_int_equal(ok, json_reader_init(
+        &r, S("{\"a\":1,\"b\":\"hi\",\"c\":true}"), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));   /* begin_object */
+
+    assert_int_equal(ok, json_reader_find_property(
+        &r, S("b"), &v));
+    assert_int_equal(json_token_string, v.kind);
+    assert_int_equal(2, span_get_size(v.slice));
+    assert_memory_equal("hi", span_get_ptr(v.slice), 2);
+}
+
+static void reader_find_property_missing(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    json_token_t  v;
+    assert_int_equal(ok, json_reader_init(
+        &r, S("{\"a\":1,\"b\":2}"), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));   /* begin_object */
+
+    assert_int_equal(not_found, json_reader_find_property(
+        &r, S("z"), &v));
+    assert_int_equal(json_token_end_object, r.token.kind);
+}
+
+static void reader_find_property_skips_nested(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    json_token_t  v;
+    assert_int_equal(ok, json_reader_init(
+        &r,
+        S("{\"a\":{\"x\":1,\"y\":[2,3]},\"b\":42}"),
+        NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));   /* begin_object */
+
+    assert_int_equal(ok, json_reader_find_property(&r, S("b"), &v));
+    assert_int_equal(json_token_number, v.kind);
+    int32_t out = 0;
+    assert_int_equal(ok, json_token_get_int32(&v, &out));
+    assert_int_equal(42, out);
+}
+
+typedef struct
+{
+    int32_t  sum;
+    uint32_t count;
+} sum_ctx_t;
+
+static result_t sum_visitor(json_reader_t* r, uint32_t index, void* ctx)
+{
+    (void)index;
+    sum_ctx_t* sc = (sum_ctx_t*)ctx;
+    int32_t v = 0;
+    result_t rr = json_token_get_int32(&r->token, &v);
+    if (rr != ok) return rr;
+    sc->sum += v;
+    sc->count++;
+    return ok;
+}
+
+static void reader_for_each_array_primitives(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    assert_int_equal(ok, json_reader_init(&r, S("[10,20,30]"), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));   /* begin_array */
+
+    sum_ctx_t sc = {0};
+    assert_int_equal(ok, json_reader_for_each_array_element(&r, sum_visitor, &sc));
+    assert_int_equal(60, sc.sum);
+    assert_int_equal(3,  sc.count);
+    assert_int_equal(json_token_end_array, r.token.kind);
+}
+
+typedef struct
+{
+    uint32_t count;
+    int32_t  last_a;
+} obj_ctx_t;
+
+static result_t object_visitor(json_reader_t* r, uint32_t index, void* ctx)
+{
+    (void)index;
+    obj_ctx_t* oc = (obj_ctx_t*)ctx;
+    /* Each element is an object with property "a" we want. */
+    if (r->token.kind != json_token_begin_object) return invalid_state;
+
+    json_token_t v;
+    result_t rr = json_reader_find_property(r, S("a"), &v);
+    if (rr != ok) return rr;
+    int32_t a = 0;
+    rr = json_token_get_int32(&v, &a);
+    if (rr != ok) return rr;
+    oc->last_a = a;
+    oc->count++;
+    /* Leave reader on the object's end token by skipping remaining props. */
+    return ok;
+}
+
+static void reader_for_each_array_objects(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    assert_int_equal(ok, json_reader_init(
+        &r,
+        S("[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4},{\"a\":5}]"),
+        NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));   /* begin_array */
+
+    obj_ctx_t oc = {0};
+    assert_int_equal(ok, json_reader_for_each_array_element(&r, object_visitor, &oc));
+    assert_int_equal(3, oc.count);
+    assert_int_equal(5, oc.last_a);
+}
+
+static result_t aborting_visitor(json_reader_t* r, uint32_t index, void* ctx)
+{
+    (void)r; (void)ctx;
+    return (index == 1) ? cancelled : ok;
+}
+
+static void reader_for_each_array_visitor_aborts(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    assert_int_equal(ok, json_reader_init(&r, S("[1,2,3]"), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));
+
+    assert_int_equal(cancelled,
+        json_reader_for_each_array_element(&r, aborting_visitor, NULL));
+}
+
 int test_json_reader()
 {
     const struct CMUnitTest tests[] = {
@@ -232,6 +387,13 @@ int test_json_reader()
         cmocka_unit_test(reader_invalid_inputs),
         cmocka_unit_test(reader_skip_children),
         cmocka_unit_test(reader_writer_round_trip),
+        cmocka_unit_test(reader_rewind_works),
+        cmocka_unit_test(reader_find_property_present),
+        cmocka_unit_test(reader_find_property_missing),
+        cmocka_unit_test(reader_find_property_skips_nested),
+        cmocka_unit_test(reader_for_each_array_primitives),
+        cmocka_unit_test(reader_for_each_array_objects),
+        cmocka_unit_test(reader_for_each_array_visitor_aborts),
     };
     return cmocka_run_group_tests_name("json_reader_tests", tests, NULL, NULL);
 }

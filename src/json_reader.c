@@ -478,3 +478,94 @@ result_t json_reader_skip_children(json_reader_t* reader)
     }
     return ok;
 }
+
+
+result_t json_reader_rewind(json_reader_t* reader)
+{
+    if (reader == NULL) return invalid_argument;
+    return json_reader_init(reader, reader->_internal.json_buffer, NULL);
+}
+
+result_t json_reader_find_property(json_reader_t* reader,
+                                   span_t name,
+                                   json_token_t* out_value)
+{
+    if (reader == NULL || out_value == NULL) return invalid_argument;
+
+    /* Accept either: reader on begin_object, or reader already inside the
+     * object (between begin_object and the first property name). In the
+     * former case, advance one token to consume the begin_object. */
+    if (reader->token.kind == json_token_begin_object)
+    {
+        result_t r = json_reader_next_token(reader);
+        if (r != ok) return r;
+    }
+
+    while (true)
+    {
+        if (reader->token.kind == json_token_end_object)
+        {
+            return not_found;
+        }
+        if (reader->token.kind != json_token_property_name)
+        {
+            return unexpected_char;
+        }
+
+        bool match = json_token_is_text_equal(&reader->token, name);
+
+        result_t r = json_reader_next_token(reader);
+        if (r != ok) return r;
+
+        if (match)
+        {
+            *out_value = reader->token;
+            return ok;
+        }
+
+        r = json_reader_skip_children(reader);
+        if (r != ok) return r;
+
+        r = json_reader_next_token(reader);
+        if (r != ok) return r;
+    }
+}
+
+result_t json_reader_for_each_array_element(json_reader_t* reader,
+                                            json_array_visitor_fn cb,
+                                            void* ctx)
+{
+    if (reader == NULL || cb == NULL) return invalid_argument;
+    if (reader->token.kind != json_token_begin_array) return invalid_state;
+
+    /* Depth observed *inside* the array. After we read each element,
+     * the reader's depth is >= entry_depth. When an element is fully
+     * consumed the depth is exactly entry_depth and the token is the
+     * element's terminal token (primitive value or end_object/end_array).
+     * If the visitor under-consumed a container element, we drain the
+     * remainder by calling next_token until depth returns to entry_depth.*/
+    uint32_t entry_depth = reader->_internal.bit_stack.current_depth;
+
+    uint32_t index = 0;
+    while (true)
+    {
+        result_t r = json_reader_next_token(reader);
+        if (r != ok) return r;
+
+        if (reader->token.kind == json_token_end_array)
+        {
+            return ok;
+        }
+
+        r = cb(reader, index++, ctx);
+        if (r != ok) return r;
+
+        /* Drain any unread tokens inside the current element so the next
+         * iteration starts at the same depth as this one. */
+        while (reader->_internal.bit_stack.current_depth > entry_depth)
+        {
+            r = json_reader_next_token(reader);
+            if (r != ok) return r;
+        }
+    }
+}

@@ -162,6 +162,38 @@ static void json_string_unescape_standalone(void** state)
     assert_true(span_is_empty(out));
 }
 
+static void token_get_string_span_returns_slice(void** state)
+{
+    (void)state;
+    /* Drive a reader to produce a string token, then call the span variant. */
+    json_reader_t r;
+    span_t doc = span_from_str_literal("\"hi\\tworld\"");
+    assert_int_equal(ok, json_reader_init(&r, doc, NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));
+    assert_int_equal(json_token_string, r.token.kind);
+
+    uint8_t buf[32];
+    span_t  out;
+    assert_int_equal(ok,
+        json_token_get_string_span(&r.token, span_from_memory(buf), &out));
+    assert_int_equal(8, span_get_size(out));
+    assert_memory_equal("hi\tworld", span_get_ptr(out), 8);
+}
+
+static void token_get_string_span_insufficient_size(void** state)
+{
+    (void)state;
+    json_reader_t r;
+    assert_int_equal(ok, json_reader_init(&r,
+        span_from_str_literal("\"abcdef\""), NULL));
+    assert_int_equal(ok, json_reader_next_token(&r));
+
+    uint8_t small[3];
+    span_t  out;
+    assert_int_equal(insufficient_size,
+        json_token_get_string_span(&r.token, span_from_memory(small), &out));
+}
+
 int test_json_token()
 {
     const struct CMUnitTest tests[] = {
@@ -172,6 +204,8 @@ int test_json_token()
         cmocka_unit_test(token_get_string_unescapes),
         cmocka_unit_test(token_is_text_equal_works),
         cmocka_unit_test(json_string_unescape_standalone),
+        cmocka_unit_test(token_get_string_span_returns_slice),
+        cmocka_unit_test(token_get_string_span_insufficient_size),
     };
     return cmocka_run_group_tests_name("json_token_tests", tests, NULL, NULL);
 }

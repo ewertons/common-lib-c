@@ -524,3 +524,15 @@ bool json_token_is_text_equal(json_token_t const* token, span_t expected_text)
 
     return span_get_size(exp_remaining) == 0;
 }
+
+
+result_t json_token_get_string_span(json_token_t const* token,
+                                    span_t destination,
+                                    span_t* out_written)
+{
+    uint32_t written = 0;
+    result_t r = json_token_get_string(token, destination, &written);
+    if (r != ok) return r;
+    if (out_written) *out_written = span_slice(destination, 0, written);
+    return ok;
+}
