@@ -12,5 +12,8 @@ int test_task();
 int test_socket();
 int test_event_loop();
 int test_stringx();
+int test_json_writer();
+int test_json_reader();
+int test_json_token();
 
 #endif // TESTS_H

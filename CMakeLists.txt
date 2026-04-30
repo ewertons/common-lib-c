@@ -15,6 +15,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/common_lib_c.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/event_loop.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/hmac_sha256.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/json.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/logging_simple.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/niceties.h
@@ -33,6 +34,9 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/event_loop.c
     ${CMAKE_CURRENT_LIST_DIR}/src/hmac_sha256.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/json_reader.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/json_token.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/json_writer.c
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket_stream.c
@@ -55,6 +59,7 @@ target_include_directories (common-lib-c
 target_link_libraries(
     common-lib-c
       ${OPENSSL_LIBRARIES}
+      m
 )
 
 add_subdirectory(tests)

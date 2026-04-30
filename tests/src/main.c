@@ -28,6 +28,9 @@ int main()
   result += test_task();
   result += test_event_loop();
   result += test_stringx();
+  result += test_json_writer();
+  result += test_json_reader();
+  result += test_json_token();
 
   task_platform_deinit();
 

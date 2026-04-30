@@ -28,6 +28,11 @@ typedef enum result
     try_again =         make_result(C_UTILS, is_error_result,   is_retryable_error,     0x10),
     completed_successfully =         make_result(C_UTILS, is_success_result,   is_retryable_error,     0x30),
     cancelled =         make_result(C_UTILS, is_error_result,   is_non_retryable_error,     0x31),
+    unexpected_char =   make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x40),
+    unexpected_end =    make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x41),
+    nesting_overflow =  make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x42),
+    invalid_state =     make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x43),
+    json_reader_done =  make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x44),
     error =             make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0xFF)
 } result_t;
 
