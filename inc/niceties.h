@@ -33,6 +33,10 @@ typedef enum result
     nesting_overflow =  make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x42),
     invalid_state =     make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0x43),
     json_reader_done =  make_result(C_UTILS, is_success_result, is_non_retryable_error, 0x44),
+    /* socket.h §3.3 — connection rejected by ACL (allow_list / max_conns). */
+    result_connection_refused = make_result(C_UTILS, is_error_result, is_non_retryable_error, 0x50),
+    /* socket.h §3.3 — socket_splice() called on a TLS-enabled socket. */
+    result_splice_unsupported = make_result(C_UTILS, is_error_result, is_non_retryable_error, 0x51),
     error =             make_result(C_UTILS, is_error_result,   is_non_retryable_error, 0xFF)
 } result_t;
 
