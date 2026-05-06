@@ -10,6 +10,7 @@ int test_base64();
 int test_hmac_sha256();
 int test_task();
 int test_socket();
+int test_socket_features();
 int test_event_loop();
 int test_stringx();
 int test_json_writer();
