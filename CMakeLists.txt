@@ -60,6 +60,16 @@ target_link_libraries(
     common-lib-c
       ${OPENSSL_LIBRARIES}
       m
+      pthread
 )
+
+# §3.1 P1 — optional io_uring backend.  When enabled, link liburing and
+# define SOCKET_IO_URING so socket.c can compile the io_uring code paths.
+option(SOCKET_IO_URING "Build socket layer with io_uring support" OFF)
+if(SOCKET_IO_URING)
+    find_library(URING_LIB uring REQUIRED)
+    target_compile_definitions(common-lib-c PUBLIC SOCKET_IO_URING)
+    target_link_libraries(common-lib-c ${URING_LIB})
+endif()
 
 add_subdirectory(tests)

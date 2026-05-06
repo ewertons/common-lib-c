@@ -1,3 +1,9 @@
+/* GNU extensions: accept4(), pipe2(), splice(), MSG_ZEROCOPY,
+ * SO_BINDTODEVICE, TCP_KEEPIDLE — declared only when _GNU_SOURCE is set
+ * by the time <features.h> is pulled in via <stdlib.h>. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include <socket.h>
 
@@ -10,12 +16,19 @@
 #include <openssl/crypto.h>
 #include <openssl/bio.h>
 #include <openssl/x509v3.h>
+#include <openssl/evp.h>
+#include <openssl/sha.h>
 
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/uio.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -44,6 +57,17 @@ struct tls_backend
 {
     SSL_CTX* ctx;
     SSL*     ssl;
+
+    /* §3.2 S3 — optional 32-byte SHA-256 of peer SPKI for pinning.
+     * `pinned_spki_set == false` means no pinning. Copied to each
+     * accepted client backend in socket_accept_nb so the verification
+     * runs once the per-connection SSL has completed its handshake. */
+    bool          pinned_spki_set;
+    uint8_t       pinned_spki_sha256[32];
+
+    /* §3.2 S1 — optional post-handshake user callback. */
+    int   (*verify_peer_cb)(void* cert, void* userdata);
+    void*   verify_peer_userdata;
 };
 
 static struct tls_backend* tls_backend_new(void)
@@ -517,11 +541,56 @@ result_t socket_init(socket_t *s, socket_config_t *config)
                 return error;
             }
         }
+
+        /* §3.2 S2 — TLS 1.3 only / cipher suites / curves. */
+        if (config->tls.tls13_only)
+        {
+            if (SSL_CTX_set_min_proto_version(s->tls.backend->ctx, TLS1_3_VERSION) != 1)
+            {
+                log_error("SSL_CTX_set_min_proto_version(TLS1_3) failed");
+                return error;
+            }
+        }
+        if (config->tls.cipher_suites != NULL &&
+            SSL_CTX_set_ciphersuites(s->tls.backend->ctx, config->tls.cipher_suites) != 1)
+        {
+            log_error("SSL_CTX_set_ciphersuites failed");
+            return error;
+        }
+        if (config->tls.curves != NULL &&
+            SSL_CTX_set1_curves_list(s->tls.backend->ctx, config->tls.curves) != 1)
+        {
+            log_error("SSL_CTX_set1_curves_list failed");
+            return error;
+        }
+
+        /* §3.2 S1 — enforce mTLS when require_peer_cert is set. */
+        if (config->tls.require_peer_cert)
+        {
+            SSL_CTX_set_verify(s->tls.backend->ctx,
+                               SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                               NULL);
+        }
+
+        /* §3.2 S3 — copy the pinned SPKI hash and callback into the
+         * backend so post-handshake verification can find them. */
+        if (config->tls.pinned_spki_sha256 != NULL)
+        {
+            memcpy(s->tls.backend->pinned_spki_sha256,
+                   config->tls.pinned_spki_sha256, 32);
+            s->tls.backend->pinned_spki_set = true;
+        }
+        s->tls.backend->verify_peer_cb       = config->tls.verify_peer_cb;
+        s->tls.backend->verify_peer_userdata = config->tls.verify_peer_userdata;
     }
 
     if (config->role == socket_role_server)
     {
+#ifdef SOCK_CLOEXEC
+        s->listen_sd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
         s->listen_sd = socket(AF_INET, SOCK_STREAM, 0);
+#endif
 
         if (s->listen_sd == -1)
         {
@@ -532,8 +601,62 @@ result_t socket_init(socket_t *s, socket_config_t *config)
         int reuse = 1;
         (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_REUSEPORT
-        (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+        /* §3.1 P4 — only enable SO_REUSEPORT when the caller asked for it. */
+        if (config->local.reuse_port)
+        {
+            (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+        }
 #endif
+#ifdef SO_BINDTODEVICE
+        /* §3.2 S4 — bind to a specific NIC if requested. */
+        if (config->local.interface_name != NULL)
+        {
+            if (setsockopt(s->listen_sd, SOL_SOCKET, SO_BINDTODEVICE,
+                           config->local.interface_name,
+                           (socklen_t)strlen(config->local.interface_name)) != 0)
+            {
+                log_error("SO_BINDTODEVICE(%s) failed (%s)",
+                          config->local.interface_name, strerror(errno));
+                /* Non-fatal on platforms where this requires CAP_NET_RAW. */
+            }
+        }
+#endif
+
+        /* §3.1 P3 — TCP tuning knobs (zero-init = OS default). */
+        if (config->tcp.nodelay)
+        {
+            int one = 1;
+            (void)setsockopt(s->listen_sd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        }
+#ifdef TCP_QUICKACK
+        if (config->tcp.quickack)
+        {
+            int one = 1;
+            (void)setsockopt(s->listen_sd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+        }
+#endif
+        if (config->tcp.send_buf_size > 0)
+        {
+            (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_SNDBUF,
+                             &config->tcp.send_buf_size,
+                             sizeof(config->tcp.send_buf_size));
+        }
+        if (config->tcp.recv_buf_size > 0)
+        {
+            (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_RCVBUF,
+                             &config->tcp.recv_buf_size,
+                             sizeof(config->tcp.recv_buf_size));
+        }
+        if (config->tcp.keepalive_idle_sec > 0)
+        {
+            int one = 1;
+            (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+#ifdef TCP_KEEPIDLE
+            (void)setsockopt(s->listen_sd, IPPROTO_TCP, TCP_KEEPIDLE,
+                             &config->tcp.keepalive_idle_sec,
+                             sizeof(config->tcp.keepalive_idle_sec));
+#endif
+        }
 
         memset(&s->sa_serv, '\0', sizeof(s->sa_serv));
         s->sa_serv.sin_family = AF_INET;
@@ -1041,8 +1164,11 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
     socket_clear_fds(client);
     client->client_len = sizeof(client->sa_cli);
 
-    int sd = accept(server->listen_sd,
-                    (struct sockaddr*)&client->sa_cli, &client->client_len);
+    /* §3.1 P5 — accept4() returns a non-blocking, close-on-exec fd in one
+     * syscall, replacing accept()+fcntl(O_NONBLOCK)+FD_CLOEXEC. */
+    int sd = accept4(server->listen_sd,
+                     (struct sockaddr*)&client->sa_cli, &client->client_len,
+                     SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (sd == -1)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -1061,14 +1187,8 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
     client->role = socket_role_server; /* server-side endpoint of an accepted connection */
     client->tls.enabled = server->tls.enabled;
 
-    /* Switch to non-blocking before the TLS handshake so SSL_accept reports
-     * WANT_READ / WANT_WRITE instead of blocking. */
-    if (socket_set_nonblocking(sd) != ok)
-    {
-        close(sd);
-        client->sd = -1;
-        return error;
-    }
+    /* accept4() already set O_NONBLOCK and FD_CLOEXEC -- no follow-up
+     * socket_set_nonblocking() call needed here. */
 
     if (!client->tls.enabled)
     {
@@ -1098,6 +1218,18 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
     }
     SSL_set_fd(client->tls.backend->ssl, sd);
     SSL_set_accept_state(client->tls.backend->ssl);
+
+    /* Inherit pin / verify-cb from the listening server's backend so the
+     * post-handshake hook in socket_handshake_nb can find them. */
+    client->tls.backend->pinned_spki_set      = server->tls.backend->pinned_spki_set;
+    if (server->tls.backend->pinned_spki_set)
+    {
+        memcpy(client->tls.backend->pinned_spki_sha256,
+               server->tls.backend->pinned_spki_sha256, 32);
+    }
+    client->tls.backend->verify_peer_cb       = server->tls.backend->verify_peer_cb;
+    client->tls.backend->verify_peer_userdata = server->tls.backend->verify_peer_userdata;
+
     client->tcp_connected      = true;
     client->tls.handshake_done = false;
     client->io_want            = socket_io_want_read;
@@ -1133,6 +1265,51 @@ result_t socket_handshake_nb(socket_t* s)
     int rc = SSL_do_handshake(s->tls.backend->ssl);
     if (rc == 1)
     {
+        /* §3.2 S3 — SPKI pin verification. */
+        if (s->tls.backend->pinned_spki_set)
+        {
+            X509* peer = SSL_get_peer_certificate(s->tls.backend->ssl);
+            if (peer == NULL)
+            {
+                log_error("SPKI pin: no peer certificate");
+                return error;
+            }
+            uint8_t* spki_der = NULL;
+            int spki_len = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(peer), &spki_der);
+            X509_free(peer);
+            if (spki_len <= 0 || spki_der == NULL)
+            {
+                log_error("SPKI pin: i2d_X509_PUBKEY failed");
+                if (spki_der != NULL) OPENSSL_free(spki_der);
+                return error;
+            }
+            uint8_t hash[32];
+            unsigned int hlen = 0;
+            int ok_evp = EVP_Digest(spki_der, (size_t)spki_len, hash, &hlen,
+                                    EVP_sha256(), NULL);
+            OPENSSL_free(spki_der);
+            if (ok_evp != 1 || hlen != 32 ||
+                memcmp(hash, s->tls.backend->pinned_spki_sha256, 32) != 0)
+            {
+                log_error("SPKI pin mismatch");
+                return error;
+            }
+        }
+
+        /* §3.2 S1 — optional user callback. */
+        if (s->tls.backend->verify_peer_cb != NULL)
+        {
+            X509* peer = SSL_get_peer_certificate(s->tls.backend->ssl);
+            int cb_rc = s->tls.backend->verify_peer_cb(
+                            (void*)peer, s->tls.backend->verify_peer_userdata);
+            if (peer != NULL) X509_free(peer);
+            if (cb_rc != 0)
+            {
+                log_error("verify_peer_cb rejected peer (rc=%d)", cb_rc);
+                return error;
+            }
+        }
+
         s->tls.handshake_done = true;
         s->io_want            = 0;
         return ok;
@@ -1164,7 +1341,13 @@ result_t socket_connect_nb_begin(socket_t* client)
     int rv;
     struct addrinfo hints, *servinfo, *p;
     (void)memset(&hints, 0, sizeof hints);
-    hints.ai_family   = AF_UNSPEC;
+    /* The rest of this socket layer is IPv4-only (sa_serv is a
+     * sockaddr_in, bind/accept use AF_INET). Constrain the client
+     * resolver to AF_INET so we never pick an IPv6 address that the
+     * server side could not have bound to -- otherwise a non-blocking
+     * connect to ::1 can return EINPROGRESS and silently never complete
+     * because no IPv6 listener exists. */
+    hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
     uint8_t port_string[6] = { 0 };
@@ -1358,22 +1541,29 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
     }
 }
 
-result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
-                        uint32_t* out_received)
+result_t socket_read_nb(socket_t* s, span_t dst, uint32_t* out_received)
 {
-    if (s == NULL || dst == NULL || out_received == NULL)
+    if (s == NULL || out_received == NULL)
     {
         return invalid_argument;
     }
     *out_received = 0;
+
+    void*    dst_ptr = span_get_ptr(dst);
+    uint32_t cap     = span_get_size(dst);
+
     if (cap == 0)
     {
         return ok;
     }
+    if (dst_ptr == NULL)
+    {
+        return invalid_argument;
+    }
 
     if (!s->tls.enabled)
     {
-        ssize_t r = recv(s->sd, dst, (size_t)cap, 0);
+        ssize_t r = recv(s->sd, dst_ptr, (size_t)cap, 0);
         if (r > 0)
         {
             *out_received = (uint32_t)r;
@@ -1399,7 +1589,7 @@ result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
     }
 
     ERR_clear_error();
-    int n = SSL_read(s->tls.backend->ssl, dst, (int)cap);
+    int n = SSL_read(s->tls.backend->ssl, dst_ptr, (int)cap);
     if (n > 0)
     {
         *out_received = (uint32_t)n;
@@ -1422,4 +1612,267 @@ result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
                       sslerr, strerror(errno));
             return error;
     }
+}
+
+/* ------------------------------------------------------------------------- *
+ * §3.1 P2 — vectored non-blocking write.
+ *
+ * Plain TCP path: build an iovec array and call sendmsg(). When iov_cnt == 1
+ * the implementation attempts MSG_ZEROCOPY (Linux >= 4.14) and silently
+ * falls back to plain sendmsg() on ENOTSUP.  The TLS path serialises the
+ * iovec into back-to-back SSL_write calls.
+ * ------------------------------------------------------------------------- */
+result_t socket_writev_nb(socket_t* s,
+                          const span_t* iov, size_t iov_cnt,
+                          uint32_t* out_written)
+{
+    if (s == NULL || out_written == NULL || (iov == NULL && iov_cnt > 0))
+    {
+        return invalid_argument;
+    }
+    *out_written = 0;
+    if (iov_cnt == 0)
+    {
+        s->io_want = 0;
+        return ok;
+    }
+
+    if (!s->tls.enabled)
+    {
+        struct iovec sysv[16];
+        if (iov_cnt > sizeof(sysv) / sizeof(sysv[0]))
+        {
+            iov_cnt = sizeof(sysv) / sizeof(sysv[0]);
+        }
+        size_t total = 0;
+        for (size_t i = 0; i < iov_cnt; ++i)
+        {
+            sysv[i].iov_base = span_get_ptr(iov[i]);
+            sysv[i].iov_len  = span_get_size(iov[i]);
+            total += sysv[i].iov_len;
+        }
+
+        struct msghdr mh = { 0 };
+        mh.msg_iov    = sysv;
+        mh.msg_iovlen = iov_cnt;
+
+        int flags = MSG_NOSIGNAL;
+#ifdef MSG_ZEROCOPY
+        if (iov_cnt == 1)
+        {
+            ssize_t n = sendmsg(s->sd, &mh, flags | MSG_ZEROCOPY);
+            if (n >= 0)
+            {
+                *out_written = (uint32_t)n;
+                s->io_want = ((size_t)n == total) ? 0 : socket_io_want_write;
+                return ((size_t)n == total) ? ok : try_again;
+            }
+            if (errno != ENOTSUP && errno != EOPNOTSUPP)
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                {
+                    s->io_want = socket_io_want_write;
+                    return try_again;
+                }
+                log_error("sendmsg(MSG_ZEROCOPY) (%s)", strerror(errno));
+                return error;
+            }
+            /* Fallthrough to plain sendmsg() on ENOTSUP. */
+        }
+#endif
+        ssize_t n = sendmsg(s->sd, &mh, flags);
+        if (n >= 0)
+        {
+            *out_written = (uint32_t)n;
+            s->io_want = ((size_t)n == total) ? 0 : socket_io_want_write;
+            return ((size_t)n == total) ? ok : try_again;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
+            s->io_want = socket_io_want_write;
+            return try_again;
+        }
+        log_error("sendmsg (%s)", strerror(errno));
+        return error;
+    }
+
+    /* TLS path: SSL has no native scatter-gather; serialise. */
+    if (s->tls.backend == NULL || s->tls.backend->ssl == NULL)
+    {
+        return invalid_argument;
+    }
+    for (size_t i = 0; i < iov_cnt; ++i)
+    {
+        uint32_t w = 0;
+        result_t r = socket_write_nb(s, iov[i], &w);
+        *out_written += w;
+        if (r != ok)
+        {
+            return r;
+        }
+    }
+    s->io_want = 0;
+    return ok;
+}
+
+/* ------------------------------------------------------------------------- *
+ * §3.1 P2 / §3.2 — zero-copy splice between two plain TCP sockets.
+ *
+ * Refuses with `result_splice_unsupported` if either side has TLS.  The
+ * pipe used as kernel intermediary is created and torn down per call;
+ * §8 of the improvement plan suggests caching it in `socket_t`, which is
+ * left as a follow-up since the public §5 socket_t shape does not yet
+ * carry that field.
+ * ------------------------------------------------------------------------- */
+result_t socket_splice(socket_t* src, socket_t* dst,
+                       size_t max_bytes, size_t* out_spliced)
+{
+    if (src == NULL || dst == NULL || out_spliced == NULL)
+    {
+        return invalid_argument;
+    }
+    *out_spliced = 0;
+    if (src->tls.enabled || dst->tls.enabled)
+    {
+        return result_splice_unsupported;
+    }
+    if (max_bytes == 0)
+    {
+        return ok;
+    }
+
+#if defined(__linux__)
+    int pipefd[2];
+    if (pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) != 0)
+    {
+        log_error("pipe2 (%s)", strerror(errno));
+        return error;
+    }
+
+    ssize_t in = splice(src->sd, NULL, pipefd[1], NULL, max_bytes,
+                        SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
+    if (in == 0)
+    {
+        close(pipefd[0]); close(pipefd[1]);
+        return end_of_data;
+    }
+    if (in < 0)
+    {
+        int e = errno;
+        close(pipefd[0]); close(pipefd[1]);
+        if (e == EAGAIN || e == EWOULDBLOCK || e == EINTR)
+        {
+            return try_again;
+        }
+        log_error("splice(in) (%s)", strerror(e));
+        return error;
+    }
+
+    size_t written = 0;
+    while (written < (size_t)in)
+    {
+        ssize_t out = splice(pipefd[0], NULL, dst->sd, NULL,
+                             (size_t)in - written,
+                             SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
+        if (out > 0)
+        {
+            written += (size_t)out;
+            continue;
+        }
+        if (out < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+        {
+            break;
+        }
+        int e = errno;
+        close(pipefd[0]); close(pipefd[1]);
+        log_error("splice(out) (%s)", strerror(e));
+        return error;
+    }
+
+    close(pipefd[0]); close(pipefd[1]);
+    *out_spliced = written;
+    return (written == (size_t)in) ? ok : try_again;
+#else
+    (void)max_bytes;
+    return result_splice_unsupported;
+#endif
+}
+
+/* ------------------------------------------------------------------------- *
+ * §3.1 P6 — slab buffer pool.
+ *
+ * One contiguous allocation holds `pool_count` * `buf_size` bytes; a
+ * stack of free indices and a counting semaphore make `acquire` block
+ * until a slot is free.  The pool itself is thread-safe across multiple
+ * producers/consumers via an internal mutex.
+ * ------------------------------------------------------------------------- */
+struct socket_buf_pool
+{
+    uint8_t* base;
+    size_t   buf_size;
+    size_t   count;
+    size_t*  free_idx;     /* stack */
+    size_t   free_top;     /* index of next free slot in `free_idx` */
+    pthread_mutex_t mu;
+    sem_t    sem;
+};
+
+socket_buf_pool_t* socket_buf_pool_create(size_t buf_size, size_t pool_count)
+{
+    if (buf_size == 0 || pool_count == 0) return NULL;
+
+    socket_buf_pool_t* p = (socket_buf_pool_t*)calloc(1, sizeof(*p));
+    if (p == NULL) return NULL;
+    p->base     = (uint8_t*)calloc(pool_count, buf_size);
+    p->free_idx = (size_t*) calloc(pool_count, sizeof(size_t));
+    if (p->base == NULL || p->free_idx == NULL)
+    {
+        free(p->base); free(p->free_idx); free(p);
+        return NULL;
+    }
+    p->buf_size = buf_size;
+    p->count    = pool_count;
+    p->free_top = pool_count;
+    for (size_t i = 0; i < pool_count; ++i)
+    {
+        p->free_idx[i] = i;
+    }
+    if (pthread_mutex_init(&p->mu, NULL) != 0 ||
+        sem_init(&p->sem, 0, (unsigned)pool_count) != 0)
+    {
+        free(p->base); free(p->free_idx); free(p);
+        return NULL;
+    }
+    return p;
+}
+
+void socket_buf_pool_destroy(socket_buf_pool_t* pool)
+{
+    if (pool == NULL) return;
+    sem_destroy(&pool->sem);
+    pthread_mutex_destroy(&pool->mu);
+    free(pool->free_idx);
+    free(pool->base);
+    free(pool);
+}
+
+void* socket_buf_pool_acquire(socket_buf_pool_t* pool)
+{
+    if (pool == NULL) return NULL;
+    if (sem_wait(&pool->sem) != 0) return NULL;
+    pthread_mutex_lock(&pool->mu);
+    size_t idx = pool->free_idx[--pool->free_top];
+    pthread_mutex_unlock(&pool->mu);
+    return pool->base + idx * pool->buf_size;
+}
+
+void socket_buf_pool_release(socket_buf_pool_t* pool, void* buf)
+{
+    if (pool == NULL || buf == NULL) return;
+    size_t idx = ((uint8_t*)buf - pool->base) / pool->buf_size;
+    if (idx >= pool->count) return; /* foreign pointer */
+    pthread_mutex_lock(&pool->mu);
+    pool->free_idx[pool->free_top++] = idx;
+    pthread_mutex_unlock(&pool->mu);
+    sem_post(&pool->sem);
 }
