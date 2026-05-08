@@ -532,7 +532,8 @@ result_t socket_init(socket_t *s, socket_config_t *config)
         int reuse = 1;
         (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_REUSEPORT
-        (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+        if (config->reuse_port)
+            (void)setsockopt(s->listen_sd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
 #endif
 
         memset(&s->sa_serv, '\0', sizeof(s->sa_serv));

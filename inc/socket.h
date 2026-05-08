@@ -63,6 +63,10 @@ typedef struct socket_config
     local_host_config_t local;
     remote_host_config_t remote;
 
+    /* When true, sets SO_REUSEPORT so multiple processes can bind to
+     * the same port.  Defaults to false in plain/secure helpers. */
+    bool reuse_port;
+
     struct
     {
         bool enable;
