@@ -496,6 +496,14 @@ result_t socket_init(socket_t *s, socket_config_t *config)
             return error;
         }
 
+        /* When no explicit CA file is given, load the system default
+         * trusted CA certificates so that connections to public servers
+         * (e.g. MusicBrainz, Anthropic) can verify the peer. */
+        if (config->tls.trusted_certificate_file == NULL)
+        {
+            (void)SSL_CTX_set_default_verify_paths(s->tls.backend->ctx);
+        }
+
         if (config->tls.certificate_file != NULL &&
             SSL_CTX_use_certificate_file(s->tls.backend->ctx, config->tls.certificate_file, SSL_FILETYPE_PEM) <= 0)
         {
