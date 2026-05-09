@@ -812,6 +812,18 @@ result_t socket_connect(socket_t *client)
 
             SSL_set_verify(client->tls.backend->ssl, SSL_VERIFY_PEER, NULL);
 
+            /* Set SNI (Server Name Indication) so the server knows which
+             * certificate to present.  Required by most CDN-backed APIs. */
+            if (!span_is_empty(client->remote.hostname))
+            {
+                char sni_host[256];
+                uint32_t hlen = span_get_size(client->remote.hostname);
+                if (hlen >= sizeof(sni_host)) hlen = sizeof(sni_host) - 1;
+                memcpy(sni_host, span_get_ptr(client->remote.hostname), hlen);
+                sni_host[hlen] = '\0';
+                SSL_set_tlsext_host_name(client->tls.backend->ssl, sni_host);
+            }
+
             /* Bind hostname verification to the configured remote.hostname
              * so the server cert's SAN/CN must match the name we asked to
              * connect to. Without this, the chain is verified but any cert
@@ -824,7 +836,7 @@ result_t socket_connect(socket_t *client)
                     X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
                 if (X509_VERIFY_PARAM_set1_host(vp,
                         (const char*)span_get_ptr(client->remote.hostname),
-                        0) != 1)
+                        span_get_size(client->remote.hostname)) != 1)
                 {
                     log_error("X509_VERIFY_PARAM_set1_host failed");
                 }
