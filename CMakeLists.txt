@@ -2,13 +2,19 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(common-lib-c)
 
-find_package(cmocka CONFIG REQUIRED)
+option(COMMON_LIB_C_BUILD_TESTS   "Build test executables (requires cmocka)" ON)
+
+if(${COMMON_LIB_C_BUILD_TESTS})
+    find_package(cmocka CONFIG REQUIRED)
+endif()
+
 find_package(OpenSSL REQUIRED)
 
 enable_testing()
 
 set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/ansi_colors.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/arg_parser.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/base64.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/bst_redblack.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
@@ -17,7 +23,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/hmac_sha256.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/json.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/logging_simple.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/logging.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/niceties.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/socket.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/socket_stream.h
@@ -29,6 +35,7 @@ set(header_files
 )
 
 set(source_files
+    ${CMAKE_CURRENT_LIST_DIR}/src/arg_parser.c
     ${CMAKE_CURRENT_LIST_DIR}/src/base64.c
     ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c
@@ -38,6 +45,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/json_token.c
     ${CMAKE_CURRENT_LIST_DIR}/src/json_writer.c
     ${CMAKE_CURRENT_LIST_DIR}/src/list.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/logging.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket_stream.c
     ${CMAKE_CURRENT_LIST_DIR}/src/span.c
@@ -62,4 +70,6 @@ target_link_libraries(
       m
 )
 
-add_subdirectory(tests)
+if(${COMMON_LIB_C_BUILD_TESTS})
+    add_subdirectory(tests)
+endif()

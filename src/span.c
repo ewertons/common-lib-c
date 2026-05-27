@@ -1,10 +1,13 @@
 #include <string.h>
+#include <ctype.h>
 
 #include <span.h>
 
 #include <regex.h>
 
+#ifndef isdigit
 #define isdigit(x) (x >= '0' && x <= '9')
+#endif // isdigit
 
 #define REGMATCH_ARRAY_MAX_SIZE 10
 
@@ -30,6 +33,11 @@ int span_set(span_t span, uint32_t position, uint8_t value)
 }
 
 int span_compare(span_t a, span_t b)
+{
+    return span_icompare(a, b, false);
+}
+
+int span_icompare(span_t a, span_t b, bool ignore_case)
 {
     int result;
 
@@ -57,12 +65,21 @@ int span_compare(span_t a, span_t b)
 
             for (uint32_t x = 0; x < a.length; x++)
             {
-                if (a.ptr[x] < b.ptr[x])
+                uint8_t char_a = a.ptr[x];
+                uint8_t char_b = b.ptr[x];
+
+                if (ignore_case)
+                {
+                    char_a = tolower(char_a);
+                    char_b = tolower(char_b);
+                }
+
+                if (char_a < char_b)
                 {
                     result = 1;
                     break;
                 }
-                else if (a.ptr[x] > b.ptr[x])
+                else if (char_a > char_b)
                 {
                     result = -1;
                     break;
@@ -74,13 +91,14 @@ int span_compare(span_t a, span_t b)
     return result;
 }
 
+
 int span_find(span_t span, int32_t start, span_t target, span_t* out_remainder)
 {
     int result = -1;
 
     if (start >=0 && span_get_size(target) > 0 && (span_get_size(span) - start) >= span_get_size(target))
     {
-        for (int32_t h = start; h <= (span_get_size(span) - span_get_size(target)); h++)
+        for (int32_t h = start; h <= ((int32_t)(span_get_size(span) - span_get_size(target))); h++)
         {
             if (span_get(span, h) == span_get(target, 0))
             {
@@ -113,9 +131,9 @@ int span_find_reverse(span_t span, int32_t start, span_t target)
 
     if (span_get_size(target) > 0 &&
         span_get_size(target) <= span_get_size(span) &&
-        (start == -1 || (start >= (span_get_size(target) - 1) && start < span_get_size(span))))
+        (start == -1 || (start >= ((int32_t)(span_get_size(target) - 1)) && start < (int32_t)span_get_size(span))))
     {
-        for (int32_t h = (start == -1 ? span_get_size(span) - 1 : start); h >= (span_get_size(target) - 1); h--)
+        for (int32_t h = (int32_t)(start == -1 ? span_get_size(span) - 1 : start); h >= (span_get_size(target) - 1); h--)
         {
             int i;
 

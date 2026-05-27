@@ -19,7 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "logging_simple.h"
+#include "logging.h"
 #include "niceties.h"
 
 #define SSL_DO_HANDSHAKE_SUCCESS 1
@@ -96,138 +96,138 @@ static void socket_error(SSL *ssl, int err)
     }
 }
 
-static int add_certificate_to_store(SSL_CTX* ssl_context, const char* certificate_file_path)
-{
-    int result = 0;
+// static int add_certificate_to_store(SSL_CTX* ssl_context, const char* certificate_file_path)
+// {
+//     int result = 0;
 
-    if (certificate_file_path != NULL)
-    {
-        X509_STORE* cert_store = SSL_CTX_get_cert_store(ssl_context);
+//     if (certificate_file_path != NULL)
+//     {
+//         X509_STORE* cert_store = SSL_CTX_get_cert_store(ssl_context);
 
-        if (cert_store == NULL)
-        {
-            printf("failure in SSL_CTX_get_cert_store.\n");
-            result = 1;
-        }
-        else
-        {
-#if (OPENSSL_VERSION_NUMBER >= 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER)
-            const BIO_METHOD* bio_method;
-#else
-            BIO_METHOD* bio_method;
-#endif
-            bio_method = BIO_s_mem();
+//         if (cert_store == NULL)
+//         {
+//             printf("failure in SSL_CTX_get_cert_store.\n");
+//             result = 1;
+//         }
+//         else
+//         {
+// #if (OPENSSL_VERSION_NUMBER >= 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER)
+//             const BIO_METHOD* bio_method;
+// #else
+//             BIO_METHOD* bio_method;
+// #endif
+//             bio_method = BIO_s_mem();
 
-            if (bio_method == NULL)
-            {
-                printf("failure in BIO_s_mem\n");
-                result = 1;
-            }
-            else
-            {
-                BIO* cert_file_bio = BIO_new_file(certificate_file_path, "r");
+//             if (bio_method == NULL)
+//             {
+//                 printf("failure in BIO_s_mem\n");
+//                 result = 1;
+//             }
+//             else
+//             {
+//                 BIO* cert_file_bio = BIO_new_file(certificate_file_path, "r");
 
-                if (cert_file_bio == NULL)
-                {
-                    printf("failure in BIO_file_new\n");
-                    result = 1;
-                }
-                else
-                {
-                    {
-                        {
-                            X509* certificate;
+//                 if (cert_file_bio == NULL)
+//                 {
+//                     printf("failure in BIO_file_new\n");
+//                     result = 1;
+//                 }
+//                 else
+//                 {
+//                     {
+//                         {
+//                             X509* certificate;
 
-                            while ((certificate = PEM_read_bio_X509(cert_file_bio, NULL, NULL, NULL)) != NULL)
-                            {
-                                if (!X509_STORE_add_cert(cert_store, certificate))
-                                {
-                                    X509_free(certificate);
-                                    printf("failure in X509_STORE_add_cert\n");
-                                    break;
-                                }
-                                X509_free(certificate);
-                            }
-                            if (certificate == NULL)
-                            {
-                                result = 0;/*all is fine*/
-                            }
-                            else
-                            {
-                                /*previous while loop terminated unfortunately*/
-                                result = 1;
-                            }
-                        }
-                    }
+//                             while ((certificate = PEM_read_bio_X509(cert_file_bio, NULL, NULL, NULL)) != NULL)
+//                             {
+//                                 if (!X509_STORE_add_cert(cert_store, certificate))
+//                                 {
+//                                     X509_free(certificate);
+//                                     printf("failure in X509_STORE_add_cert\n");
+//                                     break;
+//                                 }
+//                                 X509_free(certificate);
+//                             }
+//                             if (certificate == NULL)
+//                             {
+//                                 result = 0;/*all is fine*/
+//                             }
+//                             else
+//                             {
+//                                 /*previous while loop terminated unfortunately*/
+//                                 result = 1;
+//                             }
+//                         }
+//                     }
 
-                    BIO_free(cert_file_bio);
-                }
-            }
-        }
-    }
+//                     BIO_free(cert_file_bio);
+//                 }
+//             }
+//         }
+//     }
 
-    return result;
-}
+//     return result;
+// }
 
-static const char* SSL_version_to_string(int version)
-{
-    switch(version)
-    {
-        case SSL3_VERSION:
-            return "SSL3";
-            break;
-        case TLS1_VERSION:
-            return "TLS/1.0";
-            break;
-        case TLS1_1_VERSION:
-            return "TLS/1.1";
-            break;
-        case TLS1_2_VERSION:
-            return "TLS/1.2";
-            break;
-        case TLS1_3_VERSION:
-            return "TLS/1.3";
-            break;
-        case DTLS1_VERSION:
-            return "DTLS/1.0";
-            break;
-        case DTLS1_2_VERSION:
-            return "DTLS/1.2";
-            break;
-        case DTLS1_BAD_VER:
-            return "DTLS1_BAD_VER";
-            break;
-        default:
-            return "UNDEFINED";
-    }
-}
+// static const char* SSL_version_to_string(int version)
+// {
+//     switch(version)
+//     {
+//         case SSL3_VERSION:
+//             return "SSL3";
+//             break;
+//         case TLS1_VERSION:
+//             return "TLS/1.0";
+//             break;
+//         case TLS1_1_VERSION:
+//             return "TLS/1.1";
+//             break;
+//         case TLS1_2_VERSION:
+//             return "TLS/1.2";
+//             break;
+//         case TLS1_3_VERSION:
+//             return "TLS/1.3";
+//             break;
+//         case DTLS1_VERSION:
+//             return "DTLS/1.0";
+//             break;
+//         case DTLS1_2_VERSION:
+//             return "DTLS/1.2";
+//             break;
+//         case DTLS1_BAD_VER:
+//             return "DTLS1_BAD_VER";
+//             break;
+//         default:
+//             return "UNDEFINED";
+//     }
+// }
 
-static const char* SSL_content_type_to_string(int content_type)
-{
-    switch(content_type)
-    {
-        case SSL3_RT_CHANGE_CIPHER_SPEC:
-            return "change cipher";
-            break;
-        case SSL3_RT_ALERT:
-            return "alert";
-            break;
-        case SSL3_RT_HANDSHAKE:
-            return "handshake";
-            break;
-        case SSL3_RT_APPLICATION_DATA:
-            return "data";
-            break;
-        case SSL3_RT_HEADER:
-            return "header";
-            break;
-        case SSL3_RT_INNER_CONTENT_TYPE:
-            return "inner content type";
-            break;
-        default:
-            return "undefined";
-    }
-}
+// static const char* SSL_content_type_to_string(int content_type)
+// {
+//     switch(content_type)
+//     {
+//         case SSL3_RT_CHANGE_CIPHER_SPEC:
+//             return "change cipher";
+//             break;
+//         case SSL3_RT_ALERT:
+//             return "alert";
+//             break;
+//         case SSL3_RT_HANDSHAKE:
+//             return "handshake";
+//             break;
+//         case SSL3_RT_APPLICATION_DATA:
+//             return "data";
+//             break;
+//         case SSL3_RT_HEADER:
+//             return "header";
+//             break;
+//         case SSL3_RT_INNER_CONTENT_TYPE:
+//             return "inner content type";
+//             break;
+//         default:
+//             return "undefined";
+//     }
+// }
 
 typedef enum {
     invalid = 0,
@@ -238,30 +238,30 @@ typedef enum {
     reserved = 255
 } ssl_content_type_t;
 
-static const char* ssl_content_type_to_string(ssl_content_type_t content_type)
-{
-    switch(content_type)
-    {
-        case invalid:
-            return "invalid";
-            break;
-        case change_cipher_spec:
-            return "change_cipher_spec";
-            break;
-        case alert:
-            return "alert";
-            break;
-        case handshake:
-            return "handshake";
-            break;
-        case application_data:
-            return "application_data";
-            break;
-        default:
-            return "undefined";
-            break;
-    }
-}
+// static const char* ssl_content_type_to_string(ssl_content_type_t content_type)
+// {
+//     switch(content_type)
+//     {
+//         case invalid:
+//             return "invalid";
+//             break;
+//         case change_cipher_spec:
+//             return "change_cipher_spec";
+//             break;
+//         case alert:
+//             return "alert";
+//             break;
+//         case handshake:
+//             return "handshake";
+//             break;
+//         case application_data:
+//             return "application_data";
+//             break;
+//         default:
+//             return "undefined";
+//             break;
+//     }
+// }
 
 // https://tls12.xargs.org/#client-hello/annotated
 typedef uint16_t tls_protocol_version_t;
@@ -301,78 +301,78 @@ typedef enum
     tls_handshake_type_undefined = (255)
 } tls_handshake_type_t;
 
-static const char* tls_handshake_type_to_string(tls_handshake_type_t type)
-{
-    switch(type)
-    {
-        case tls_handshake_type_hello_request_RESERVED:
-            return "hello_request";
-            break;
-        case tls_handshake_type_client_hello:
-            return "client_hello";
-            break;
-        case tls_handshake_type_server_hello:
-            return "server_hello";
-            break;
-        case tls_handshake_type_hello_verify_request_RESERVED:
-            return "hello_verify_request";
-            break;
-        case tls_handshake_type_new_session_ticket:
-            return "new_session_ticket";
-            break;
-        case tls_handshake_type_end_of_early_data:
-            return "end_of_early_data";
-            break;
-        case tls_handshake_type_hello_retry_request_RESERVED:
-            return "hello_retry_request";
-            break;
-        case tls_handshake_type_encrypted_extensions:
-            return "encrypted_extensions";
-            break;
-        case tls_handshake_type_certificate:
-            return "certificate";
-            break;
-        case tls_handshake_type_server_key_exchange_RESERVED:
-            return "server_key_exchange";
-            break;
-        case tls_handshake_type_certificate_request:
-            return "certificate_request";
-            break;
-        case tls_handshake_type_server_hello_done_RESERVED:
-            return "server_hello_done";
-            break;
-        case tls_handshake_type_certificate_verify:
-            return "certificate_verify";
-            break;
-        case tls_handshake_type_client_key_exchange_RESERVED:
-            return "client_key_exchange";
-            break;
-        case tls_handshake_type_finished:
-            return "finished";
-            break;
-        case tls_handshake_type_certificate_url_RESERVED:
-            return "certificate_url";
-            break;
-        case tls_handshake_type_certificate_status_RESERVED:
-            return "certificate_status";
-            break;
-        case tls_handshake_type_supplemental_data_RESERVED:
-            return "supplemental_data";
-            break;
-        case tls_handshake_type_key_update:
-            return "key_update";
-            break;
-        case tls_handshake_type_message_hash:
-            return "message_hash";
-            break;
-        case tls_handshake_type_undefined:
-            return "undefined";
-            break;
-        default:
-            return "undefined";
-            break;
-    }
-}
+// static const char* tls_handshake_type_to_string(tls_handshake_type_t type)
+// {
+//     switch(type)
+//     {
+//         case tls_handshake_type_hello_request_RESERVED:
+//             return "hello_request";
+//             break;
+//         case tls_handshake_type_client_hello:
+//             return "client_hello";
+//             break;
+//         case tls_handshake_type_server_hello:
+//             return "server_hello";
+//             break;
+//         case tls_handshake_type_hello_verify_request_RESERVED:
+//             return "hello_verify_request";
+//             break;
+//         case tls_handshake_type_new_session_ticket:
+//             return "new_session_ticket";
+//             break;
+//         case tls_handshake_type_end_of_early_data:
+//             return "end_of_early_data";
+//             break;
+//         case tls_handshake_type_hello_retry_request_RESERVED:
+//             return "hello_retry_request";
+//             break;
+//         case tls_handshake_type_encrypted_extensions:
+//             return "encrypted_extensions";
+//             break;
+//         case tls_handshake_type_certificate:
+//             return "certificate";
+//             break;
+//         case tls_handshake_type_server_key_exchange_RESERVED:
+//             return "server_key_exchange";
+//             break;
+//         case tls_handshake_type_certificate_request:
+//             return "certificate_request";
+//             break;
+//         case tls_handshake_type_server_hello_done_RESERVED:
+//             return "server_hello_done";
+//             break;
+//         case tls_handshake_type_certificate_verify:
+//             return "certificate_verify";
+//             break;
+//         case tls_handshake_type_client_key_exchange_RESERVED:
+//             return "client_key_exchange";
+//             break;
+//         case tls_handshake_type_finished:
+//             return "finished";
+//             break;
+//         case tls_handshake_type_certificate_url_RESERVED:
+//             return "certificate_url";
+//             break;
+//         case tls_handshake_type_certificate_status_RESERVED:
+//             return "certificate_status";
+//             break;
+//         case tls_handshake_type_supplemental_data_RESERVED:
+//             return "supplemental_data";
+//             break;
+//         case tls_handshake_type_key_update:
+//             return "key_update";
+//             break;
+//         case tls_handshake_type_message_hash:
+//             return "message_hash";
+//             break;
+//         case tls_handshake_type_undefined:
+//             return "undefined";
+//             break;
+//         default:
+//             return "undefined";
+//             break;
+//     }
+// }
 
 typedef struct
 {
@@ -395,63 +395,63 @@ typedef struct
     } data;
 } tls_handshake_t;
 
-static void print_ssl_message(int content_type, const uint8_t *buffer, size_t length)
-{
-    if (content_type == SSL3_RT_HEADER)
-    {
-        ssl_header_t header;
-        header.type =(ssl_content_type_t) buffer[0];
-        header.legacy_record_version = (tls_protocol_version_t)((buffer[1] << 8) + buffer[2]);
-        header.length = ((buffer[3] << 8) + buffer[4]);
-        printf(" content-type=%s, version=%s, length=%d",
-            ssl_content_type_to_string(header.type), SSL_version_to_string(header.legacy_record_version), header.length);
-    }
-    else if (content_type == SSL3_RT_HANDSHAKE)
-    {
-        tls_handshake_t handshake;
-        handshake.type = (tls_handshake_type_t)buffer[0];
-        handshake.length = ((buffer[1] << 16) + (buffer[2] << 8) + buffer[3]);
+// static void print_ssl_message(int content_type, const uint8_t *buffer, size_t length)
+// {
+//     if (content_type == SSL3_RT_HEADER)
+//     {
+//         ssl_header_t header;
+//         header.type =(ssl_content_type_t) buffer[0];
+//         header.legacy_record_version = (tls_protocol_version_t)((buffer[1] << 8) + buffer[2]);
+//         header.length = ((buffer[3] << 8) + buffer[4]);
+//         printf(" content-type=%s, version=%s, length=%d",
+//             ssl_content_type_to_string(header.type), SSL_version_to_string(header.legacy_record_version), header.length);
+//     }
+//     else if (content_type == SSL3_RT_HANDSHAKE)
+//     {
+//         tls_handshake_t handshake;
+//         handshake.type = (tls_handshake_type_t)buffer[0];
+//         handshake.length = ((buffer[1] << 16) + (buffer[2] << 8) + buffer[3]);
 
-        printf(" %s (%u)", tls_handshake_type_to_string(handshake.type), handshake.length);
+//         printf(" %s (%u)", tls_handshake_type_to_string(handshake.type), handshake.length);
 
-        if (handshake.type == tls_handshake_type_client_hello)
-        {
-            handshake.data.client_hello.legacy_version = (tls_protocol_version_t)((buffer[4] << 8) + buffer[5]);
-            handshake.data.client_hello.random = &buffer[5];
+//         if (handshake.type == tls_handshake_type_client_hello)
+//         {
+//             handshake.data.client_hello.legacy_version = (tls_protocol_version_t)((buffer[4] << 8) + buffer[5]);
+//             handshake.data.client_hello.random = &buffer[5];
 
-            if (handshake.data.client_hello.legacy_version < TLS1_3_VERSION)
-            {
-                handshake.data.client_hello.legacy_session_id = &buffer[37];
-            }
-            else
-            {
-                printf(" no-random");
-                handshake.data.client_hello.legacy_session_id = NULL;
-            }
+//             if (handshake.data.client_hello.legacy_version < TLS1_3_VERSION)
+//             {
+//                 handshake.data.client_hello.legacy_session_id = &buffer[37];
+//             }
+//             else
+//             {
+//                 printf(" no-random");
+//                 handshake.data.client_hello.legacy_session_id = NULL;
+//             }
 
-            printf(" %02x (%02x)", handshake.data.client_hello.legacy_version, TLS1_3_VERSION);
-        }
-    }
-    else
-    {
-        for (int i = 0; i< length; i++)
-        {
-            printf(" %02x", buffer[i]);
-        }
-    }
-}
+//             printf(" %02x (%02x)", handshake.data.client_hello.legacy_version, TLS1_3_VERSION);
+//         }
+//     }
+//     else
+//     {
+//         for (size_t i = 0; i < length; i++)
+//         {
+//             printf(" %02x", buffer[i]);
+//         }
+//     }
+// }
 
-static void SSL_debug(int write_p, int version,
-                      int content_type, const void *buf,
-                      size_t len, SSL *ssl, void *arg)
-{
-    (void)ssl;
-    (void)arg;
-    printf("%s [%s] %s (%d bytes):", write_p == 0 ? "<-" : "->",
-        SSL_version_to_string(version), SSL_content_type_to_string(content_type), (int)len);
-    print_ssl_message(content_type, (const uint8_t*)buf, len);
-    printf("\n");
-}
+// static void SSL_debug(int write_p, int version,
+//                       int content_type, const void *buf,
+//                       size_t len, SSL *ssl, void *arg)
+// {
+//     (void)ssl;
+//     (void)arg;
+//     printf("%s [%s] %s (%d bytes):", write_p == 0 ? "<-" : "->",
+//         SSL_version_to_string(version), SSL_content_type_to_string(content_type), (int)len);
+//     print_ssl_message(content_type, (const uint8_t*)buf, len);
+//     printf("\n");
+// }
 
 result_t socket_init(socket_t *s, socket_config_t *config)
 {
@@ -749,7 +749,7 @@ result_t socket_connect(socket_t *client)
         /* ----------------------------------------------- */
         /* TCP connection is ready. Do server side SSL. */
         int err, rv;
-        int sockfd, numbytes;
+        int sockfd;
         struct addrinfo hints, *servinfo, *p;
 
         (void)memset(&hints, 0, sizeof hints);
@@ -764,7 +764,7 @@ result_t socket_connect(socket_t *client)
             return error;
         }
 
-        if ((rv = getaddrinfo(span_get_ptr(client->remote.hostname), port_string, &hints, &servinfo)) != 0)
+        if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname), (const char * restrict)port_string, &hints, &servinfo)) != 0)
         {
             log_error("getaddrinfo: %s", gai_strerror(rv));
             return error;
@@ -1183,8 +1183,8 @@ result_t socket_connect_nb_begin(socket_t* client)
         return error;
     }
 
-    if ((rv = getaddrinfo(span_get_ptr(client->remote.hostname),
-                          (char*)port_string, &hints, &servinfo)) != 0)
+    if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname),
+                          (const char * restrict)port_string, &hints, &servinfo)) != 0)
     {
         log_error("getaddrinfo: %s", gai_strerror(rv));
         return error;

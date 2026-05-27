@@ -7,7 +7,7 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
-#include "logging_simple.h"
+#include "logging.h"
 
 /* ------------------------------------------------------------------------- *
  *                                Internals

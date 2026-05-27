@@ -55,6 +55,18 @@ int span_set(span_t span, uint32_t position, uint8_t value);
 int span_compare(span_t a, span_t b);
 
 /**
+ * @brief Compares two spans, ignoring case if specified.
+ * 
+ * @param a The first #span_t to compare.
+ * @param b The second #span_t to compare.
+ * @param ignore_case If true, the comparison is case-insensitive.
+ * @return 0 if the spans are equal, a negative value if a is less than b, or a positive value if a is greater than b.
+ */
+int span_icompare(span_t a, span_t b, bool ignore_case);
+
+int span_equals(span_t a, span_t b, bool ignore_case);
+
+/**
  * @brief Verifies if an span is empty (its size is zero).
  * 
  * @param span The #span_t to be verified.
