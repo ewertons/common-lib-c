@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
@@ -1078,6 +1079,22 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
         client->sd = -1;
         return error;
     }
+
+    /* Disable Nagle's algorithm to avoid 40ms delays on small writes
+     * (response headers, TLS records). */
+    int nodelay = 1;
+    (void)setsockopt(sd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    /* Enlarge the kernel receive buffer so the TCP window stays open during
+     * large uploads (e.g. file transfers over WiFi). */
+    int rcvbuf = 524288; /* 512 KiB */
+    (void)setsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
+#ifdef TCP_QUICKACK
+    /* Disable delayed ACKs so the sender's window opens faster. */
+    int quickack = 1;
+    (void)setsockopt(sd, IPPROTO_TCP, TCP_QUICKACK, &quickack, sizeof(quickack));
+#endif
 
     if (!client->tls.enabled)
     {
