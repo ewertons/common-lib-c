@@ -7,7 +7,7 @@ static int mod_table[] = {0, 2, 1};
 
 int base64_encode(span_t data, span_t encoded, span_t* out_encoded)
 {
-    int32_t encoded_size = 4 * ((span_get_size(data) + 2) / 3);
+    uint32_t encoded_size = 4U * ((span_get_size(data) + 2U) / 3U);
     
     if (span_get_size(encoded) < encoded_size)
     {
@@ -16,7 +16,7 @@ int base64_encode(span_t data, span_t encoded, span_t* out_encoded)
 
     uint8_t* encoded_raw = span_get_ptr(encoded);
 
-    for (int i = 0, j = 0; i < span_get_size(data);)
+    for (uint32_t i = 0, j = 0; i < span_get_size(data);)
     {
         uint32_t octet_a = i < span_get_size(data) ? span_get(data, i++) : 0;
         uint32_t octet_b = i < span_get_size(data) ? span_get(data, i++) : 0;
@@ -30,7 +30,7 @@ int base64_encode(span_t data, span_t encoded, span_t* out_encoded)
     }
 
     // Add padding if necessary
-    for (int i = 0; i < mod_table[span_get_size(data) % 3]; i++)
+    for (uint32_t i = 0; i < (uint32_t)mod_table[span_get_size(data) % 3]; i++)
     {
         encoded_raw[encoded_size - 1 - i] = '=';
     }
@@ -65,7 +65,7 @@ int base64_decode(span_t data, span_t decoded, span_t* out_decoded)
         return ERROR;
     }
 
-    int32_t decoded_size = span_get_size(data) / 4 * 3;
+    uint32_t decoded_size = span_get_size(data) / 4U * 3U;
     uint8_t* data_raw = span_get_ptr(data);
     uint8_t* decoded_raw = span_get_ptr(decoded);
 
@@ -77,7 +77,7 @@ int base64_decode(span_t data, span_t decoded, span_t* out_decoded)
         return ERROR;
     }
 
-    for (int i = 0, j = 0; i < span_get_size(data);)
+    for (uint32_t i = 0, j = 0; i < span_get_size(data);)
     {
         uint32_t sextet_a = data_raw[i] == '=' ? 0 & i++ : decode_base64_value(data_raw[i++]);
         uint32_t sextet_b = data_raw[i] == '=' ? 0 & i++ : decode_base64_value(data_raw[i++]);

@@ -133,9 +133,11 @@ int span_find_reverse(span_t span, int32_t start, span_t target)
         span_get_size(target) <= span_get_size(span) &&
         (start == -1 || (start >= ((int32_t)(span_get_size(target) - 1)) && start < (int32_t)span_get_size(span))))
     {
-        for (int32_t h = (int32_t)(start == -1 ? span_get_size(span) - 1 : start); h >= (span_get_size(target) - 1); h--)
+        int32_t start_h = (start == -1) ? (int32_t)span_get_size(span) - 1 : start;
+        int32_t target_h = (int32_t)span_get_size(target) - 1;
+        for (int32_t h = start_h; h >= target_h; h--)
         {
-            int i;
+            uint32_t i;
 
             for (i = 0; i < span_get_size(target); i++)
             {
@@ -387,7 +389,7 @@ span_t span_copy_n(span_t to, span_t* from, int32_t count, int32_t* required_siz
         *required_size = total_size;
     }
 
-    if (span_get_size(to) < total_size)
+    if (span_get_size(to) < (uint32_t)total_size)
     {
         return SPAN_EMPTY;
     }
