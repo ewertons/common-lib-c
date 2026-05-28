@@ -43,6 +43,7 @@ static inline uint8_t span_get(span_t s, uint32_t p)
 int span_set(span_t span, uint32_t position, uint8_t value);
 
 #define span_from_memory(x) span_init(x, sizeofarray(x))
+#define span_from_buffer(x) span_from_memory(x)
 
 #define span_from_string(x) span_init(x, sizeofarray(x) - 1)
 
