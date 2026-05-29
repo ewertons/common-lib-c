@@ -31,6 +31,7 @@ int main()
   result += test_json_writer();
   result += test_json_reader();
   result += test_json_token();
+  result += test_arg_parser2();
 
   task_platform_deinit();
 
