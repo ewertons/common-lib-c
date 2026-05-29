@@ -15,6 +15,6 @@ int test_stringx();
 int test_json_writer();
 int test_json_reader();
 int test_json_token();
-int test_arg_parser2();
+int test_arg_parser();
 
 #endif // TESTS_H

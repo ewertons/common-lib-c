@@ -15,7 +15,6 @@ enable_testing()
 set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/ansi_colors.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/arg_parser.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/arg_parser2.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/base64.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/bst_redblack.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/circular_list.h
@@ -37,7 +36,6 @@ set(header_files
 
 set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/arg_parser.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/arg_parser2.c
     ${CMAKE_CURRENT_LIST_DIR}/src/base64.c
     ${CMAKE_CURRENT_LIST_DIR}/src/bst_redblack.c
     ${CMAKE_CURRENT_LIST_DIR}/src/circular_list.c

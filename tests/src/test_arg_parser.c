@@ -5,7 +5,7 @@
 #include <string.h>
 #include <cmocka.h>
 
-#include "arg_parser2.h"
+#include "arg_parser.h"
 #include "tests.h"
 
 /* ----------------------------------------------------------------------- */
@@ -16,7 +16,7 @@ typedef struct test_handler_ctx
 {
     bool     called;
     uint32_t parsed_count;
-    arg_parser2_parsed_arg_t args[16];
+    arg_parser_parsed_arg_t args[16];
 } test_handler_ctx_t;
 
 static test_handler_ctx_t g_ctx;
@@ -26,7 +26,7 @@ static void reset_ctx(void)
     memset(&g_ctx, 0, sizeof(g_ctx));
 }
 
-static result_t capture_handler(arg_parser2_parsed_t* parsed, const void* context)
+static result_t capture_handler(arg_parser_parsed_t* parsed, const void* context)
 {
     (void)context;
     g_ctx.called = true;
@@ -38,7 +38,7 @@ static result_t capture_handler(arg_parser2_parsed_t* parsed, const void* contex
     return ok;
 }
 
-static result_t failing_handler(arg_parser2_parsed_t* parsed, const void* context)
+static result_t failing_handler(arg_parser_parsed_t* parsed, const void* context)
 {
     (void)parsed; (void)context;
     g_ctx.called = true;
@@ -54,7 +54,7 @@ static void test_basic_command_dispatch(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "A simple command",
             .name = "hello",
@@ -67,7 +67,7 @@ static void test_basic_command_dispatch(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test app",
         .commands = commands,
         .commands_count = 1,
@@ -78,7 +78,7 @@ static void test_basic_command_dispatch(void** state)
     };
 
     char* argv[] = { "prog", "hello" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -94,7 +94,7 @@ static void test_command_short_name(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "List items",
             .name = "list",
@@ -107,7 +107,7 @@ static void test_command_short_name(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test app",
         .commands = commands,
         .commands_count = 1,
@@ -118,7 +118,7 @@ static void test_command_short_name(void** state)
     };
 
     char* argv[] = { "prog", "ls" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -133,7 +133,7 @@ static void test_nested_subcommands(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t leaf_cmds[] = {
+    const arg_parser_command_t leaf_cmds[] = {
         {
             .description = "Send a request",
             .name = "request",
@@ -146,7 +146,7 @@ static void test_nested_subcommands(void** state)
         }
     };
 
-    const arg_parser2_command_t top_cmds[] = {
+    const arg_parser_command_t top_cmds[] = {
         {
             .description = "Pairing commands",
             .name = "pair",
@@ -159,7 +159,7 @@ static void test_nested_subcommands(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test app",
         .commands = top_cmds,
         .commands_count = 1,
@@ -170,14 +170,14 @@ static void test_nested_subcommands(void** state)
     };
 
     char* argv[] = { "prog", "pair", "request" };
-    result_t r = arg_parser2_process_args(&root, 3, argv);
+    result_t r = arg_parser_process_args(&root, 3, argv);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
 
     /* Also test short name for subcommand. */
     reset_ctx();
     char* argv2[] = { "prog", "pair", "req" };
-    r = arg_parser2_process_args(&root, 3, argv2);
+    r = arg_parser_process_args(&root, 3, argv2);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
 }
@@ -191,7 +191,7 @@ static void test_named_arg_long(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 10,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -222,7 +222,7 @@ static void test_named_arg_long(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Run something",
             .name = "run",
@@ -235,7 +235,7 @@ static void test_named_arg_long(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test app",
         .commands = commands,
         .commands_count = 1,
@@ -246,7 +246,7 @@ static void test_named_arg_long(void** state)
     };
 
     char* argv[] = { "prog", "run", "--timeout", "42", "--verbose" };
-    result_t r = arg_parser2_process_args(&root, 5, argv);
+    result_t r = arg_parser_process_args(&root, 5, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -282,7 +282,7 @@ static void test_named_arg_short(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 5,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -299,7 +299,7 @@ static void test_named_arg_short(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Start server",
             .name = "serve",
@@ -312,7 +312,7 @@ static void test_named_arg_short(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -323,7 +323,7 @@ static void test_named_arg_short(void** state)
     };
 
     char* argv[] = { "prog", "serve", "-p", "9090" };
-    result_t r = arg_parser2_process_args(&root, 4, argv);
+    result_t r = arg_parser_process_args(&root, 4, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -342,7 +342,7 @@ static void test_positional_args(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_POSITIONAL,
@@ -373,7 +373,7 @@ static void test_positional_args(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Copy a file",
             .name = "cp",
@@ -386,7 +386,7 @@ static void test_positional_args(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -397,7 +397,7 @@ static void test_positional_args(void** state)
     };
 
     char* argv[] = { "prog", "cp", "file_a.txt", "file_b.txt" };
-    result_t r = arg_parser2_process_args(&root, 4, argv);
+    result_t r = arg_parser_process_args(&root, 4, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -431,7 +431,7 @@ static void test_mixed_named_and_positional(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -462,7 +462,7 @@ static void test_mixed_named_and_positional(void** state)
         }
     };
 
-    const arg_parser2_command_t leaf_cmds[] = {
+    const arg_parser_command_t leaf_cmds[] = {
         {
             .description = "Send pairing request",
             .name = "request",
@@ -475,7 +475,7 @@ static void test_mixed_named_and_positional(void** state)
         }
     };
 
-    const arg_parser2_command_t top_cmds[] = {
+    const arg_parser_command_t top_cmds[] = {
         {
             .description = "Pairing",
             .name = "pair",
@@ -488,7 +488,7 @@ static void test_mixed_named_and_positional(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "GoGoShare CLI",
         .commands = top_cmds,
         .commands_count = 1,
@@ -500,7 +500,7 @@ static void test_mixed_named_and_positional(void** state)
 
     /* Named arg before positional: "pair request --timeout 10 peer123" */
     char* argv[] = { "ggs", "pair", "request", "--timeout", "10", "peer123" };
-    result_t r = arg_parser2_process_args(&root, 6, argv);
+    result_t r = arg_parser_process_args(&root, 6, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -535,7 +535,7 @@ static void test_default_values(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 7,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -566,7 +566,7 @@ static void test_default_values(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Fetch data",
             .name = "fetch",
@@ -579,7 +579,7 @@ static void test_default_values(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -591,7 +591,7 @@ static void test_default_values(void** state)
 
     /* Provide neither argument — both should get defaults. */
     char* argv[] = { "prog", "fetch" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -626,7 +626,7 @@ static void test_required_arg_missing(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -643,7 +643,7 @@ static void test_required_arg_missing(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Connect",
             .name = "connect",
@@ -656,7 +656,7 @@ static void test_required_arg_missing(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -667,7 +667,7 @@ static void test_required_arg_missing(void** state)
     };
 
     char* argv[] = { "prog", "connect" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
@@ -682,7 +682,7 @@ static void test_unknown_argument(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Do stuff",
             .name = "stuff",
@@ -695,7 +695,7 @@ static void test_unknown_argument(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -706,7 +706,7 @@ static void test_unknown_argument(void** state)
     };
 
     char* argv[] = { "prog", "stuff", "--bogus", "val" };
-    result_t r = arg_parser2_process_args(&root, 4, argv);
+    result_t r = arg_parser_process_args(&root, 4, argv);
 
     assert_int_equal(r, invalid_argument);
 }
@@ -720,7 +720,7 @@ static void test_invalid_value_type(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -737,7 +737,7 @@ static void test_invalid_value_type(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Test cmd",
             .name = "test",
@@ -750,7 +750,7 @@ static void test_invalid_value_type(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -761,7 +761,7 @@ static void test_invalid_value_type(void** state)
     };
 
     char* argv[] = { "prog", "test", "--count", "not_a_number" };
-    result_t r = arg_parser2_process_args(&root, 4, argv);
+    result_t r = arg_parser_process_args(&root, 4, argv);
 
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
@@ -776,7 +776,7 @@ static void test_range_restriction(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -797,7 +797,7 @@ static void test_range_restriction(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Set volume",
             .name = "vol",
@@ -810,7 +810,7 @@ static void test_range_restriction(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -822,7 +822,7 @@ static void test_range_restriction(void** state)
 
     /* Within range — should succeed. */
     char* argv_ok[] = { "prog", "vol", "--volume", "50" };
-    result_t r = arg_parser2_process_args(&root, 4, argv_ok);
+    result_t r = arg_parser_process_args(&root, 4, argv_ok);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
     assert_int_equal(g_ctx.args[0].value.int32, 50);
@@ -830,7 +830,7 @@ static void test_range_restriction(void** state)
     /* Out of range — should fail. */
     reset_ctx();
     char* argv_bad[] = { "prog", "vol", "--volume", "150" };
-    r = arg_parser2_process_args(&root, 4, argv_bad);
+    r = arg_parser_process_args(&root, 4, argv_bad);
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
 }
@@ -846,7 +846,7 @@ static void test_allowed_values_restriction(void** state)
 
     static const char* allowed_formats[] = { "json", "csv", "xml" };
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -867,7 +867,7 @@ static void test_allowed_values_restriction(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Export",
             .name = "export",
@@ -880,7 +880,7 @@ static void test_allowed_values_restriction(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -892,7 +892,7 @@ static void test_allowed_values_restriction(void** state)
 
     /* Valid value. */
     char* argv_ok[] = { "prog", "export", "--format", "csv" };
-    result_t r = arg_parser2_process_args(&root, 4, argv_ok);
+    result_t r = arg_parser_process_args(&root, 4, argv_ok);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
     assert_string_equal(g_ctx.args[0].value.string, "csv");
@@ -900,7 +900,7 @@ static void test_allowed_values_restriction(void** state)
     /* Invalid value. */
     reset_ctx();
     char* argv_bad[] = { "prog", "export", "--format", "yaml" };
-    r = arg_parser2_process_args(&root, 4, argv_bad);
+    r = arg_parser_process_args(&root, 4, argv_bad);
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
 }
@@ -909,7 +909,7 @@ static void test_allowed_values_restriction(void** state)
 /* Test: custom validator                                                   */
 /* ----------------------------------------------------------------------- */
 
-static result_t validate_even(arg_parser2_value_t value, arg_parser2_value_type_t type)
+static result_t validate_even(arg_parser_value_t value, arg_parser_value_type_t type)
 {
     (void)type;
     if (value.int32 % 2 != 0) return invalid_argument;
@@ -921,7 +921,7 @@ static void test_custom_validator(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -938,7 +938,7 @@ static void test_custom_validator(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Test",
             .name = "check",
@@ -951,7 +951,7 @@ static void test_custom_validator(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -963,14 +963,14 @@ static void test_custom_validator(void** state)
 
     /* Even number — ok. */
     char* argv_ok[] = { "prog", "check", "--num", "8" };
-    result_t r = arg_parser2_process_args(&root, 4, argv_ok);
+    result_t r = arg_parser_process_args(&root, 4, argv_ok);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
 
     /* Odd number — fail. */
     reset_ctx();
     char* argv_bad[] = { "prog", "check", "--num", "7" };
-    r = arg_parser2_process_args(&root, 4, argv_bad);
+    r = arg_parser_process_args(&root, 4, argv_bad);
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
 }
@@ -984,7 +984,7 @@ static void test_handler_return_propagated(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Fail",
             .name = "fail",
@@ -997,7 +997,7 @@ static void test_handler_return_propagated(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -1008,7 +1008,7 @@ static void test_handler_return_propagated(void** state)
     };
 
     char* argv[] = { "prog", "fail" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, error);
     assert_true(g_ctx.called);
@@ -1018,16 +1018,16 @@ static void test_handler_return_propagated(void** state)
 /* Test: get_argument_by_id returns correct entry or NULL                   */
 /* ----------------------------------------------------------------------- */
 
-static result_t check_get_by_id_handler(arg_parser2_parsed_t* parsed, const void* context)
+static result_t check_get_by_id_handler(arg_parser_parsed_t* parsed, const void* context)
 {
     (void)context;
     g_ctx.called = true;
 
-    arg_parser2_parsed_arg_t* found = arg_parser2_get_argument_by_id(parsed, 42);
+    arg_parser_parsed_arg_t* found = arg_parser_get_argument_by_id(parsed, 42);
     assert_non_null(found);
     assert_int_equal(found->value.int32, -5);
 
-    arg_parser2_parsed_arg_t* missing = arg_parser2_get_argument_by_id(parsed, 999);
+    arg_parser_parsed_arg_t* missing = arg_parser_get_argument_by_id(parsed, 999);
     assert_null(missing);
 
     return ok;
@@ -1038,7 +1038,7 @@ static void test_get_argument_by_id(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 42,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -1055,7 +1055,7 @@ static void test_get_argument_by_id(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Test",
             .name = "cmd",
@@ -1068,7 +1068,7 @@ static void test_get_argument_by_id(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -1079,7 +1079,7 @@ static void test_get_argument_by_id(void** state)
     };
 
     char* argv[] = { "prog", "cmd", "--val", "-5" };
-    result_t r = arg_parser2_process_args(&root, 4, argv);
+    result_t r = arg_parser_process_args(&root, 4, argv);
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
 }
@@ -1093,7 +1093,7 @@ static void test_double_and_char_types(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_arg_t args_def[] = {
+    const arg_parser_arg_t args_def[] = {
         {
             .id = 0,
             .type = ARG_PARSER_ARG_TYPE_NAMED,
@@ -1124,7 +1124,7 @@ static void test_double_and_char_types(void** state)
         }
     };
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Process",
             .name = "proc",
@@ -1137,7 +1137,7 @@ static void test_double_and_char_types(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -1148,7 +1148,7 @@ static void test_double_and_char_types(void** state)
     };
 
     char* argv[] = { "prog", "proc", "--ratio", "3.14", "-d", "," };
-    result_t r = arg_parser2_process_args(&root, 6, argv);
+    result_t r = arg_parser_process_args(&root, 6, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -1181,7 +1181,7 @@ static void test_unknown_command(void** state)
     (void)state;
     reset_ctx();
 
-    const arg_parser2_command_t commands[] = {
+    const arg_parser_command_t commands[] = {
         {
             .description = "Known",
             .name = "known",
@@ -1194,7 +1194,7 @@ static void test_unknown_command(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Test",
         .commands = commands,
         .commands_count = 1,
@@ -1205,7 +1205,7 @@ static void test_unknown_command(void** state)
     };
 
     char* argv[] = { "prog", "bogus" };
-    result_t r = arg_parser2_process_args(&root, 2, argv);
+    result_t r = arg_parser_process_args(&root, 2, argv);
 
     assert_int_equal(r, invalid_argument);
     assert_false(g_ctx.called);
@@ -1215,27 +1215,27 @@ static void test_unknown_command(void** state)
 /* Test: complex scenario — multi-level commands with all features          */
 /* ----------------------------------------------------------------------- */
 
-static result_t complex_handler(arg_parser2_parsed_t* parsed, const void* context)
+static result_t complex_handler(arg_parser_parsed_t* parsed, const void* context)
 {
     (void)context;
     g_ctx.called = true;
     g_ctx.parsed_count = parsed->arguments_count;
 
     /* Verify we can use the getter API inside the handler. */
-    arg_parser2_parsed_arg_t* host = arg_parser2_get_argument_by_id(parsed, 100);
+    arg_parser_parsed_arg_t* host = arg_parser_get_argument_by_id(parsed, 100);
     assert_non_null(host);
     assert_string_equal(host->value.string, "10.0.0.1");
 
-    arg_parser2_parsed_arg_t* port = arg_parser2_get_argument_by_id(parsed, 101);
+    arg_parser_parsed_arg_t* port = arg_parser_get_argument_by_id(parsed, 101);
     assert_non_null(port);
     assert_int_equal(port->value.uint32, 443);
     assert_true(port->is_default); /* Not provided, should be default. */
 
-    arg_parser2_parsed_arg_t* proto = arg_parser2_get_argument_by_id(parsed, 102);
+    arg_parser_parsed_arg_t* proto = arg_parser_get_argument_by_id(parsed, 102);
     assert_non_null(proto);
     assert_string_equal(proto->value.string, "tcp");
 
-    arg_parser2_parsed_arg_t* retries = arg_parser2_get_argument_by_id(parsed, 103);
+    arg_parser_parsed_arg_t* retries = arg_parser_get_argument_by_id(parsed, 103);
     assert_non_null(retries);
     assert_int_equal(retries->value.int32, 5);
     assert_false(retries->is_default);
@@ -1250,7 +1250,7 @@ static void test_complex_full_scenario(void** state)
 
     static const char* allowed_protos[] = { "tcp", "udp", "quic" };
 
-    const arg_parser2_arg_t deploy_args[] = {
+    const arg_parser_arg_t deploy_args[] = {
         {
             .id = 100,
             .type = ARG_PARSER_ARG_TYPE_POSITIONAL,
@@ -1321,7 +1321,7 @@ static void test_complex_full_scenario(void** state)
         }
     };
 
-    const arg_parser2_command_t service_cmds[] = {
+    const arg_parser_command_t service_cmds[] = {
         {
             .description = "Deploy a service instance",
             .name = "deploy",
@@ -1334,7 +1334,7 @@ static void test_complex_full_scenario(void** state)
         }
     };
 
-    const arg_parser2_command_t top_cmds[] = {
+    const arg_parser_command_t top_cmds[] = {
         {
             .description = "Service management",
             .name = "service",
@@ -1347,7 +1347,7 @@ static void test_complex_full_scenario(void** state)
         }
     };
 
-    const arg_parser2_t root = {
+    const arg_parser_t root = {
         .description = "Complex CLI tool",
         .commands = top_cmds,
         .commands_count = 1,
@@ -1363,7 +1363,7 @@ static void test_complex_full_scenario(void** state)
      * - Positional "10.0.0.1" for host
      * - --port and --protocol get defaults (443 and "tcp") */
     char* argv[] = { "prog", "svc", "dep", "-r", "5", "10.0.0.1" };
-    result_t r = arg_parser2_process_args(&root, 6, argv);
+    result_t r = arg_parser_process_args(&root, 6, argv);
 
     assert_int_equal(r, ok);
     assert_true(g_ctx.called);
@@ -1378,7 +1378,7 @@ static void test_null_root(void** state)
 {
     (void)state;
     char* argv[] = { "prog" };
-    result_t r = arg_parser2_process_args(NULL, 1, argv);
+    result_t r = arg_parser_process_args(NULL, 1, argv);
     assert_int_equal(r, invalid_argument);
 }
 
@@ -1386,7 +1386,7 @@ static void test_null_root(void** state)
 /* Test runner                                                              */
 /* ----------------------------------------------------------------------- */
 
-int test_arg_parser2(void)
+int test_arg_parser(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_basic_command_dispatch),
