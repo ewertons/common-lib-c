@@ -180,11 +180,37 @@ static result_t validate_restrictions(
 /* Help printing                                                           */
 /* ----------------------------------------------------------------------- */
 
-static void print_command_help(const arg_parser2_command_t* cmd, const char* prefix,
+static void print_command_help(const arg_parser2_command_t* cmd, const char* path,
                                const char* long_pfx, const char* short_pfx)
 {
-    fprintf(stderr, "%s", prefix);
-    if (cmd->description) fprintf(stderr, " - %s", cmd->description);
+    if (cmd->description) fprintf(stderr, "%s", cmd->description);
+    fprintf(stderr, "\n");
+
+    /* Usage line. */
+    bool has_named = false;
+    for (uint32_t i = 0; i < cmd->arguments_count; i++)
+    {
+        if (cmd->arguments[i].type == ARG_PARSER_ARG_TYPE_NAMED)
+        {
+            has_named = true;
+            break;
+        }
+    }
+
+    fprintf(stderr, "\nUsage:\n  %s", path);
+    if (has_named) fprintf(stderr, " [options]");
+    for (uint32_t i = 0; i < cmd->arguments_count; i++)
+    {
+        const arg_parser2_arg_t* a = &cmd->arguments[i];
+        if (a->type == ARG_PARSER_ARG_TYPE_POSITIONAL)
+        {
+            if (a->required)
+                fprintf(stderr, " <%s>", a->name ? a->name : "arg");
+            else
+                fprintf(stderr, " [%s]", a->name ? a->name : "arg");
+        }
+    }
+    if (cmd->commands_count > 0) fprintf(stderr, " <subcommand>");
     fprintf(stderr, "\n");
 
     if (cmd->commands_count > 0)
@@ -228,6 +254,7 @@ static void print_command_help(const arg_parser2_command_t* cmd, const char* pre
 
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  %shelp             Show this help message\n", long_pfx);
+    fprintf(stderr, "  %slong-help        Show detailed help for all subcommands\n", long_pfx);
 }
 
 static void print_root_help(const arg_parser2_t* root)
@@ -299,6 +326,7 @@ static void print_long_help(const arg_parser2_t* root)
 
     for (uint32_t i = 0; i < root->commands_count; i++)
     {
+        if (i > 0) fprintf(stderr, "\n");
         print_long_help_cmd(&root->commands[i], long_pfx, short_pfx, 0);
     }
 
@@ -330,6 +358,7 @@ static bool is_long_help_flag(const char* token, const char* long_pfx)
 static result_t parse_command_args(
     const arg_parser2_command_t* cmd,
     const arg_parser2_t* root,
+    const char* path,
     int argc, char** argv,
     arg_parser2_parsed_t* parsed)
 {
@@ -354,10 +383,10 @@ static result_t parse_command_args(
     {
         const char* token = argv[i];
 
-        /* Intercept --help within argument parsing for leaf commands. */
-        if (is_help_flag(token, long_pfx))
+        /* Intercept --help and --long-help within argument parsing for leaf commands. */
+        if (is_help_flag(token, long_pfx) || is_long_help_flag(token, long_pfx))
         {
-            print_command_help(cmd, cmd->name, long_pfx, short_pfx);
+            print_command_help(cmd, path, long_pfx, short_pfx);
             parsed->arguments = NULL;
             parsed->arguments_count = 0;
             return completed_successfully;
@@ -631,6 +660,7 @@ static const arg_parser2_command_t* find_command(
 static result_t dispatch(
     const arg_parser2_command_t* cmd,
     const arg_parser2_t* root,
+    const char* path,
     int argc, char** argv,
     const void* context)
 {
@@ -640,7 +670,50 @@ static result_t dispatch(
     /* Check for --help at this command level. */
     if (argc > 0 && is_help_flag(argv[0], long_pfx))
     {
-        print_command_help(cmd, cmd->name, long_pfx, short_pfx);
+        print_command_help(cmd, path, long_pfx, short_pfx);
+        return ok;
+    }
+
+    /* Check for --long-help at this command level. */
+    if (argc > 0 && is_long_help_flag(argv[0], long_pfx))
+    {
+        if (cmd->description) fprintf(stderr, "%s", cmd->description);
+        fprintf(stderr, "\n\n");
+        for (uint32_t i = 0; i < cmd->commands_count; i++)
+        {
+            if (i > 0) fprintf(stderr, "\n");
+            print_long_help_cmd(&cmd->commands[i], long_pfx, short_pfx, 0);
+        }
+        if (cmd->arguments_count > 0)
+        {
+            fprintf(stderr, "\nArguments:\n");
+            for (uint32_t i = 0; i < cmd->arguments_count; i++)
+            {
+                const arg_parser2_arg_t* a = &cmd->arguments[i];
+                if (a->type == ARG_PARSER_ARG_TYPE_NAMED)
+                {
+                    fprintf(stderr, "  ");
+                    if (a->short_name) fprintf(stderr, "%s%s", short_pfx, a->short_name);
+                    if (a->short_name && a->name) fprintf(stderr, ", ");
+                    if (a->name) fprintf(stderr, "%s%s", long_pfx, a->name);
+                    if (a->value_type != ARG_PARSER_VALUE_TYPE_NONE)
+                        fprintf(stderr, " <value>");
+                    if (a->description) fprintf(stderr, "\t%s", a->description);
+                    if (a->required) fprintf(stderr, " (required)");
+                    fprintf(stderr, "\n");
+                }
+                else
+                {
+                    fprintf(stderr, "  <%s>", a->name ? a->name : "arg");
+                    if (a->description) fprintf(stderr, "\t%s", a->description);
+                    if (a->required) fprintf(stderr, " (required)");
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+        fprintf(stderr, "\nOptions:\n");
+        fprintf(stderr, "  %shelp             Show help for this command\n", long_pfx);
+        fprintf(stderr, "  %slong-help        Show detailed help for all subcommands\n", long_pfx);
         return ok;
     }
 
@@ -650,7 +723,9 @@ static result_t dispatch(
         const arg_parser2_command_t* sub = find_command(cmd->commands, cmd->commands_count, argv[0]);
         if (sub != NULL)
         {
-            return dispatch(sub, root, argc - 1, argv + 1, context);
+            char sub_path[256];
+            snprintf(sub_path, sizeof(sub_path), "%s %s", path, sub->name);
+            return dispatch(sub, root, sub_path, argc - 1, argv + 1, context);
         }
     }
 
@@ -665,7 +740,7 @@ static result_t dispatch(
         {
             fprintf(stderr, "error: unknown subcommand '%s' for '%s'\n", argv[0], cmd->name);
         }
-        print_command_help(cmd, cmd->name, long_pfx, short_pfx);
+        print_command_help(cmd, path, long_pfx, short_pfx);
         return invalid_argument;
     }
 
@@ -677,7 +752,7 @@ static result_t dispatch(
     }
 
     arg_parser2_parsed_t parsed = { 0 };
-    result_t r = parse_command_args(cmd, root, argc, argv, &parsed);
+    result_t r = parse_command_args(cmd, root, path, argc, argv, &parsed);
     if (failed(r)) return r;
 
     /* Help was printed inside parse_command_args; do not call handler. */
@@ -696,6 +771,14 @@ static result_t dispatch(
 result_t arg_parser2_process_args(const arg_parser2_t* root, int argc, char** argv)
 {
     if (root == NULL) return invalid_argument;
+
+    /* Extract the base program name from argv[0]. */
+    const char* prog = "program";
+    if (argc > 0 && argv[0] != NULL)
+    {
+        const char* slash = strrchr(argv[0], '/');
+        prog = slash ? slash + 1 : argv[0];
+    }
 
     /* Skip program name. */
     if (argc > 0)
@@ -733,7 +816,9 @@ result_t arg_parser2_process_args(const arg_parser2_t* root, int argc, char** ar
         return invalid_argument;
     }
 
-    return dispatch(cmd, root, argc - 1, argv + 1, NULL);
+    char initial_path[256];
+    snprintf(initial_path, sizeof(initial_path), "%s %s", prog, cmd->name);
+    return dispatch(cmd, root, initial_path, argc - 1, argv + 1, NULL);
 }
 
 arg_parser2_parsed_arg_t* arg_parser2_get_argument_by_id(
