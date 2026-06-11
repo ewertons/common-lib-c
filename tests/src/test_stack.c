@@ -11,7 +11,7 @@ static void stack_push_pop_success(void** state)
 {
     (void)state;
 
-    stack_t stack;
+    clc_stack_t stack;
 
     stack_init(&stack, sizeof(int), 1);
 
@@ -38,7 +38,7 @@ static void stack_top_returns_last_pushed_without_removing(void** state)
 {
     (void)state;
 
-    stack_t stack;
+    clc_stack_t stack;
     stack_init(&stack, sizeof(int), 4);
 
     for (int i = 0; i < 3; i++)
@@ -64,7 +64,7 @@ static void stack_pop_on_empty_fails(void** state)
 {
     (void)state;
 
-    stack_t stack;
+    clc_stack_t stack;
     stack_init(&stack, sizeof(int), 4);
 
     int v;
@@ -78,7 +78,7 @@ static void stack_top_on_empty_fails(void** state)
 {
     (void)state;
 
-    stack_t stack;
+    clc_stack_t stack;
     stack_init(&stack, sizeof(int), 4);
 
     int v;
@@ -91,7 +91,7 @@ static void stack_grows_capacity_when_pushing_past_initial_size(void** state)
 {
     (void)state;
 
-    stack_t stack;
+    clc_stack_t stack;
     stack_init(&stack, sizeof(int), 2);
 
     assert_int_equal(2, stack_get_size(&stack));

@@ -8,7 +8,7 @@
 #include "list.h"
 #include "hmac_sha256.h"
 #include "niceties.h"
-#include "socket.h"
+#include "socketx.h"
 #include "span.h"
 #include "stack.h"
 #include "stream.h"

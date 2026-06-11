@@ -1,5 +1,5 @@
 
-#include <socket.h>
+#include <socketx.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -24,6 +24,18 @@
 
 #include "logging.h"
 #include "niceties.h"
+
+/* lwIP (ESP-IDF) provides getaddrinfo() but not gai_strerror(); fall back to
+ * a fixed string there so error logging stays portable. */
+#if defined(ESP_PLATFORM)
+static const char* socket_gai_strerror(int ecode)
+{
+    (void)ecode;
+    return "getaddrinfo failed";
+}
+#else
+#define socket_gai_strerror gai_strerror
+#endif
 
 #if SOCKET_TLS_ENABLED
 #define SSL_DO_HANDSHAKE_SUCCESS 1
@@ -485,8 +497,10 @@ result_t socket_init(socket_t *s, socket_config_t *config)
         SSL_load_error_strings();
         SSL_library_init();
 #endif
-#ifdef SIGPIPE
-        /* A peer disconnect during write/send must not kill the process. */
+#if defined(SIGPIPE) && !defined(ESP_PLATFORM)
+        /* A peer disconnect during write/send must not kill the process.
+         * Skipped on ESP-IDF: lwIP never raises SIGPIPE and newlib provides
+         * no signal() to link against. */
         (void)signal(SIGPIPE, SIG_IGN);
 #endif
         is_socket_library_initialized = true;
@@ -689,9 +703,6 @@ static void check_peer_certificates(SSL* ssl, const char* peer_name)
 
 result_t socket_accept(socket_t *server, socket_t *client)
 {
-    result_t result = ok;
-    int err;
-
     memset(client, 0, sizeof(socket_t));
     socket_clear_fds(client);
     client->client_len = sizeof(client->sa_cli);
@@ -719,6 +730,9 @@ result_t socket_accept(socket_t *server, socket_t *client)
 #if SOCKET_TLS_ENABLED
     /* ----------------------------------------------- */
     /* TCP connection is ready. Do server side SSL. */
+
+    result_t result = ok;
+    int err;
 
     client->tls.backend = tls_backend_new();
     if (client->tls.backend == NULL)
@@ -755,7 +769,6 @@ result_t socket_accept(socket_t *server, socket_t *client)
 
     return result;
 #else
-    (void)err;
     return error; /* unreachable: tls.enabled is always false under SOCKET_TLS_NONE */
 #endif /* SOCKET_TLS_ENABLED */
 }
@@ -811,7 +824,7 @@ result_t socket_connect(socket_t *client)
 
         if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname), (const char * restrict)port_string, &hints, &servinfo)) != 0)
         {
-            log_error("getaddrinfo: %s", gai_strerror(rv));
+            log_error("getaddrinfo: %s", socket_gai_strerror(rv));
             return error;
         }
 
@@ -1280,7 +1293,7 @@ result_t socket_connect_nb_begin(socket_t* client)
     if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname),
                           (const char * restrict)port_string, &hints, &servinfo)) != 0)
     {
-        log_error("getaddrinfo: %s", gai_strerror(rv));
+        log_error("getaddrinfo: %s", socket_gai_strerror(rv));
         return error;
     }
 

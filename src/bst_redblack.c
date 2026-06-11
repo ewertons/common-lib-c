@@ -90,7 +90,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
     {
         if (order == bst_search_order_dfs_pre_order)
         {
-            stack_t stack;
+            clc_stack_t stack;
             bst_rb_node_t* node = root;
 
             stack_init(&stack, sizeof(bst_rb_node_t*), 1);
@@ -128,7 +128,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
         }
         else if (order == bst_search_order_dfs_in_order)
         {
-            stack_t stack;
+            clc_stack_t stack;
             bst_rb_node_t* node = root;
 
             stack_init(&stack, sizeof(bst_rb_node_t*), 1);
@@ -165,7 +165,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
         }
         else if (order == bst_search_order_dfs_post_order)
         {
-            stack_t stack;
+            clc_stack_t stack;
             bst_rb_node_t* previous_node = NULL;
 
             stack_init(&stack, sizeof(bst_rb_node_t*), 1);

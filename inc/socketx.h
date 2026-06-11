@@ -1,5 +1,5 @@
-#ifndef SOCKET_H
-#define SOCKET_H
+#ifndef COMMON_LIB_C_SOCKET_H
+#define COMMON_LIB_C_SOCKET_H
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -249,4 +249,4 @@ result_t socket_write_nb(socket_t* socket, span_t data, uint32_t* out_written);
 result_t socket_read_nb(socket_t* socket, void* dst, uint32_t cap,
                         uint32_t* out_received);
 
-#endif // SOCKET_H
+#endif // COMMON_LIB_C_SOCKET_H

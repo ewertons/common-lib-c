@@ -48,7 +48,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/logging.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/niceties.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/socket.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/socketx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/socket_stream.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stack.h

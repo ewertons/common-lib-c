@@ -1,8 +1,12 @@
 #include "hmac_sha256.h"
 
+#include <stdio.h>
+
+#if !defined(SOCKET_TLS_NONE)
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
+#endif
 
 void sha_hash_to_hex_string(span_t hash, span_t string, span_t* out_string)
 {
@@ -21,6 +25,7 @@ void sha_hash_to_hex_string(span_t hash, span_t string, span_t* out_string)
 
 int hmac_sha256_get_hash(span_t key, span_t data, span_t hash, span_t* out_hash)
 {
+#if !defined(SOCKET_TLS_NONE)
     int result;
     unsigned int hash_length;
  
@@ -42,4 +47,12 @@ int hmac_sha256_get_hash(span_t key, span_t data, span_t hash, span_t* out_hash)
     }
 
     return result;
+#else
+    /* No OpenSSL available under SOCKET_TLS_NONE (e.g. ESP-IDF uses mbedTLS). */
+    (void)key;
+    (void)data;
+    (void)hash;
+    (void)out_hash;
+    return ERROR;
+#endif
 }

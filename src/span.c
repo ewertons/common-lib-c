@@ -3,6 +3,9 @@
 
 #include <span.h>
 
+/* newlib's <regex.h> (used on ESP-IDF) references off_t but does not pull in
+ * its definition, so <sys/types.h> must precede it. Harmless on glibc. */
+#include <sys/types.h>
 #include <regex.h>
 
 #ifndef isdigit

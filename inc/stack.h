@@ -10,14 +10,14 @@ typedef struct stack
     size_t value_size;
     int size;
     int count;
-} stack_t;
+} clc_stack_t;
 
-void stack_init(stack_t* stack, size_t value_size_in_bytes, int initial_size);
-void stack_deinit(stack_t* stack);
-int stack_push(stack_t* stack, void* value);
-int stack_pop(stack_t* stack, void* value);
-int stack_top(stack_t* stack, void* value);
-int stack_get_count(stack_t* stack);
-int stack_get_size(stack_t* stack);
+void stack_init(clc_stack_t* stack, size_t value_size_in_bytes, int initial_size);
+void stack_deinit(clc_stack_t* stack);
+int stack_push(clc_stack_t* stack, void* value);
+int stack_pop(clc_stack_t* stack, void* value);
+int stack_top(clc_stack_t* stack, void* value);
+int stack_get_count(clc_stack_t* stack);
+int stack_get_size(clc_stack_t* stack);
 
 #endif // STACK_H

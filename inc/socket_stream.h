@@ -3,7 +3,7 @@
 
 #include "niceties.h"
 #include "stream.h"
-#include "socket.h"
+#include "socketx.h"
 
 result_t socket_stream_initialize(stream_t* stream, socket_t* socket);
 
