@@ -4,11 +4,34 @@ project(common-lib-c)
 
 option(COMMON_LIB_C_BUILD_TESTS   "Build test executables (requires cmocka)" ON)
 
+# ---------------------------------------------------------------------------
+# Portability switches.
+#
+#   COMMON_LIB_C_TLS_BACKEND        OPENSSL (default) | NONE
+#       NONE drops the OpenSSL dependency entirely (plain TCP only). Required
+#       on targets without OpenSSL such as ESP-IDF (mbedTLS) or bare lwIP.
+#
+#   COMMON_LIB_C_EVENT_LOOP_BACKEND AUTO (default) | EPOLL | SELECT
+#       AUTO selects epoll on Linux and select() elsewhere. SELECT forces the
+#       portable select() backend (e.g. lwIP, which lacks epoll/eventfd).
+# ---------------------------------------------------------------------------
+set(COMMON_LIB_C_TLS_BACKEND "OPENSSL" CACHE STRING "TLS backend: OPENSSL or NONE")
+set_property(CACHE COMMON_LIB_C_TLS_BACKEND PROPERTY STRINGS OPENSSL NONE)
+
+set(COMMON_LIB_C_EVENT_LOOP_BACKEND "AUTO" CACHE STRING "Event loop backend: AUTO, EPOLL or SELECT")
+set_property(CACHE COMMON_LIB_C_EVENT_LOOP_BACKEND PROPERTY STRINGS AUTO EPOLL SELECT)
+
 if(${COMMON_LIB_C_BUILD_TESTS})
     find_package(cmocka CONFIG REQUIRED)
 endif()
 
-find_package(OpenSSL REQUIRED)
+if(COMMON_LIB_C_TLS_BACKEND STREQUAL "OPENSSL")
+    find_package(OpenSSL REQUIRED)
+elseif(COMMON_LIB_C_TLS_BACKEND STREQUAL "NONE")
+    message(STATUS "common-lib-c: TLS backend disabled (SOCKET_TLS_NONE)")
+else()
+    message(FATAL_ERROR "COMMON_LIB_C_TLS_BACKEND must be OPENSSL or NONE, got '${COMMON_LIB_C_TLS_BACKEND}'")
+endif()
 
 enable_testing()
 
@@ -64,11 +87,18 @@ target_include_directories (common-lib-c
   $<INSTALL_INTERFACE:include/common-lib-c>
 )
 
-target_link_libraries(
-    common-lib-c
-      ${OPENSSL_LIBRARIES}
-      m
-)
+if(COMMON_LIB_C_TLS_BACKEND STREQUAL "NONE")
+    target_compile_definitions(common-lib-c PUBLIC SOCKET_TLS_NONE=1)
+    target_link_libraries(common-lib-c m)
+else()
+    target_link_libraries(common-lib-c ${OPENSSL_LIBRARIES} m)
+endif()
+
+if(COMMON_LIB_C_EVENT_LOOP_BACKEND STREQUAL "SELECT")
+    target_compile_definitions(common-lib-c PUBLIC EVENT_LOOP_BACKEND_SELECT=1)
+elseif(COMMON_LIB_C_EVENT_LOOP_BACKEND STREQUAL "EPOLL")
+    target_compile_definitions(common-lib-c PUBLIC EVENT_LOOP_BACKEND_EPOLL=1)
+endif()
 
 if(${COMMON_LIB_C_BUILD_TESTS})
     add_subdirectory(tests)
