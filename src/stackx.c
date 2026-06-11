@@ -1,8 +1,8 @@
-#include "stack.h"
+#include "stackx.h"
 #include "niceties.h"
 #include "string.h"
 
-void stack_init(stack_t* stack, size_t value_size_in_bytes, int initial_size)
+void stackx_init(stackx_t* stack, size_t value_size_in_bytes, int initial_size)
 {
     if (stack != NULL && value_size_in_bytes > 0 && initial_size > 0)
     {
@@ -13,7 +13,7 @@ void stack_init(stack_t* stack, size_t value_size_in_bytes, int initial_size)
     }
 }
 
-void stack_deinit(stack_t* stack)
+void stackx_deinit(stackx_t* stack)
 {
     if (stack != NULL)
     {
@@ -25,7 +25,7 @@ void stack_deinit(stack_t* stack)
     }
 }
 
-int stack_push(stack_t* stack, void* value)
+int stackx_push(stackx_t* stack, void* value)
 {
     if (stack == NULL)
     {
@@ -55,7 +55,7 @@ int stack_push(stack_t* stack, void* value)
     }
 }
 
-int stack_pop(stack_t* stack, void* value)
+int stackx_pop(stackx_t* stack, void* value)
 {
     if (stack == NULL || stack->count == 0)
     {
@@ -72,7 +72,7 @@ int stack_pop(stack_t* stack, void* value)
     }
 }
 
-int stack_top(stack_t* stack, void* value)
+int stackx_top(stackx_t* stack, void* value)
 {
     if (stack == NULL || stack->count == 0 || value == NULL)
     {
@@ -85,7 +85,7 @@ int stack_top(stack_t* stack, void* value)
     }
 }
 
-int stack_get_count(stack_t* stack)
+int stackx_get_count(stackx_t* stack)
 {
     if (stack == NULL)
     {
@@ -97,7 +97,7 @@ int stack_get_count(stack_t* stack)
     }
 }
 
-int stack_get_size(stack_t* stack)
+int stackx_get_size(stackx_t* stack)
 {
     if (stack == NULL)
     {

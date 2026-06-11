@@ -1,0 +1,116 @@
+name: CI (Linux)
+
+# Standalone CI for common-lib-c. Builds the library and runs its unit
+# tests on an Ubuntu runner, plus a portability job that mirrors the
+# constraints of bare-metal / RTOS targets (no OpenSSL, select() event
+# loop). Triggered on PRs/pushes to the main branches and on demand.
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build & run tests (Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc libcmocka-dev openssl
+
+      # test_socket.c reads certificate paths under /tmp/http-c-certs by
+      # default, so generating them there needs no source patching.
+      - name: Generate test certificates
+        run: |
+          CERT_ROOT=/tmp/http-c-certs
+          CA_DIR="$CERT_ROOT/ca"
+          SERVER_DIR="$CERT_ROOT/server"
+          CLIENT_DIR="$CERT_ROOT/client"
+          mkdir -p "$CA_DIR" "$SERVER_DIR" "$CLIENT_DIR"
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+            -subj "/CN=Test Root CA" \
+            -keyout "$CA_DIR/ca.key.pem" \
+            -out    "$CA_DIR/ca.cert.pem"
+
+          openssl req -newkey rsa:2048 -nodes \
+            -subj "/CN=localhost" \
+            -keyout "$SERVER_DIR/server.key.pem" \
+            -out    "$SERVER_DIR/server.csr.pem"
+          printf '%s\n' \
+            'authorityKeyIdentifier=keyid,issuer' \
+            'basicConstraints=CA:FALSE' \
+            'keyUsage = digitalSignature, keyEncipherment' \
+            'extendedKeyUsage = serverAuth' \
+            'subjectAltName = @alt_names' \
+            '[alt_names]' \
+            'DNS.1 = localhost' \
+            'IP.1 = 127.0.0.1' > "$SERVER_DIR/server.ext"
+          openssl x509 -req -in "$SERVER_DIR/server.csr.pem" \
+            -CA "$CA_DIR/ca.cert.pem" -CAkey "$CA_DIR/ca.key.pem" -CAcreateserial \
+            -out "$SERVER_DIR/server.cert.pem" -days 365 -sha256 \
+            -extfile "$SERVER_DIR/server.ext"
+
+          openssl req -newkey rsa:2048 -nodes \
+            -subj "/CN=test-client" \
+            -keyout "$CLIENT_DIR/client.key.pem" \
+            -out    "$CLIENT_DIR/client.csr.pem"
+          printf '%s\n' \
+            'authorityKeyIdentifier=keyid,issuer' \
+            'basicConstraints=CA:FALSE' \
+            'keyUsage = digitalSignature, keyEncipherment' \
+            'extendedKeyUsage = clientAuth' > "$CLIENT_DIR/client.ext"
+          openssl x509 -req -in "$CLIENT_DIR/client.csr.pem" \
+            -CA "$CA_DIR/ca.cert.pem" -CAkey "$CA_DIR/ca.key.pem" -CAcreateserial \
+            -out "$CLIENT_DIR/client.cert.pem" -days 365 -sha256 \
+            -extfile "$CLIENT_DIR/client.ext"
+
+          # Single-level trust store: the chain is just the CA cert.
+          cp "$CA_DIR/ca.cert.pem" "$CA_DIR/chain.ca.cert.pem"
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure --timeout 60
+
+  portability-build:
+    name: Portable build (TLS-none + select backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gcc
+
+      # Mirrors RTOS / bare-metal targets such as ESP-IDF: no OpenSSL
+      # (SOCKET_TLS_NONE) and the portable select() event-loop backend (no
+      # epoll/eventfd). Tests are disabled because they assume TLS + epoll.
+      - name: Configure (portable backends)
+        run: |
+          cmake -S . -B build-portable -G Ninja \
+            -DCOMMON_LIB_C_TLS_BACKEND=NONE \
+            -DCOMMON_LIB_C_EVENT_LOOP_BACKEND=SELECT \
+            -DCOMMON_LIB_C_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build-portable -j"$(nproc)"

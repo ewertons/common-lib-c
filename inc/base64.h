@@ -8,6 +8,6 @@
 
 int base64_encode(span_t data, span_t encoded, span_t* out_encoded);
 int base64_decode(span_t data, span_t decoded, span_t* out_decoded);
-void base64_test();
+void base64_test(void);
 
 #endif // BASE64_H

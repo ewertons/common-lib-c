@@ -1,16 +1,18 @@
 
-#include <socket.h>
+#include <socketx.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#if SOCKET_TLS_ENABLED
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <openssl/bio.h>
 #include <openssl/x509v3.h>
+#endif
 
 #include <signal.h>
 #include <stdio.h>
@@ -23,7 +25,21 @@
 #include "logging.h"
 #include "niceties.h"
 
+/* lwIP (ESP-IDF) provides getaddrinfo() but not gai_strerror(); fall back to
+ * a fixed string there so error logging stays portable. */
+#if defined(ESP_PLATFORM)
+static const char* socket_gai_strerror(int ecode)
+{
+    (void)ecode;
+    return "getaddrinfo failed";
+}
+#else
+#define socket_gai_strerror gai_strerror
+#endif
+
+#if SOCKET_TLS_ENABLED
 #define SSL_DO_HANDSHAKE_SUCCESS 1
+#endif
 
 #ifndef SOCKET_LISTEN_BACKLOG
 #define SOCKET_LISTEN_BACKLOG 128
@@ -41,6 +57,7 @@
  * We allocate one of these on demand for any socket that has tls.enabled
  * set; plain-TCP sockets keep `tls.backend == NULL`.
  * ------------------------------------------------------------------------- */
+#if SOCKET_TLS_ENABLED
 struct tls_backend
 {
     SSL_CTX* ctx;
@@ -71,6 +88,22 @@ static void tls_backend_destroy(struct tls_backend** pb)
     free(b);
     *pb = NULL;
 }
+#else
+/* Plain-TCP build (SOCKET_TLS_NONE): the opaque handle is never
+ * instantiated, so the body is a placeholder and destroy is a no-op. */
+struct tls_backend
+{
+    int unused;
+};
+
+static void tls_backend_destroy(struct tls_backend** pb)
+{
+    if (pb != NULL)
+    {
+        *pb = NULL;
+    }
+}
+#endif /* SOCKET_TLS_ENABLED */
 
 static bool is_socket_library_initialized = false;
 
@@ -82,6 +115,7 @@ static void socket_clear_fds(socket_t* s)
     s->sd        = -1;
 }
 
+#if SOCKET_TLS_ENABLED
 static void socket_error(SSL *ssl, int err)
 {
     int socket_err = SSL_get_error(ssl, err);
@@ -96,6 +130,7 @@ static void socket_error(SSL *ssl, int err)
             log_error("  SSL peer closed connection");
     }
 }
+#endif /* SOCKET_TLS_ENABLED */
 
 // static int add_certificate_to_store(SSL_CTX* ssl_context, const char* certificate_file_path)
 // {
@@ -458,15 +493,23 @@ result_t socket_init(socket_t *s, socket_config_t *config)
 {
     if (!is_socket_library_initialized)
     {
+#if SOCKET_TLS_ENABLED
         SSL_load_error_strings();
         SSL_library_init();
-        /* A peer disconnect during SSL_write/send must not kill the process. */
+#endif
+#if defined(SIGPIPE) && !defined(ESP_PLATFORM)
+        /* A peer disconnect during write/send must not kill the process.
+         * Skipped on ESP-IDF: lwIP never raises SIGPIPE and newlib provides
+         * no signal() to link against. */
         (void)signal(SIGPIPE, SIG_IGN);
+#endif
         is_socket_library_initialized = true;
     }
 
     int socket_result;
+#if SOCKET_TLS_ENABLED
     const SSL_METHOD *ssl_method = (config->role == socket_role_server ? TLS_server_method() : TLS_client_method());
+#endif
 
     (void)memset(s, 0, sizeof(socket_t));
     socket_clear_fds(s);
@@ -476,6 +519,7 @@ result_t socket_init(socket_t *s, socket_config_t *config)
     s->remote      = config->remote;
     s->tls.enabled = config->tls.enable;
 
+#if SOCKET_TLS_ENABLED
     if (s->tls.enabled)
     {
         s->tls.backend = tls_backend_new();
@@ -527,6 +571,13 @@ result_t socket_init(socket_t *s, socket_config_t *config)
             }
         }
     }
+#else
+    if (s->tls.enabled)
+    {
+        log_error("TLS requested but socket built with SOCKET_TLS_NONE");
+        return invalid_argument;
+    }
+#endif /* SOCKET_TLS_ENABLED */
 
     if (config->role == socket_role_server)
     {
@@ -606,6 +657,7 @@ result_t socket_deinit(socket_t *socket)
     return result;
 }
 
+#if SOCKET_TLS_ENABLED
 static void check_peer_certificates(SSL* ssl, const char* peer_name)
 {
 #if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
@@ -647,12 +699,10 @@ static void check_peer_certificates(SSL* ssl, const char* peer_name)
         printf("%s does not have certificate.\n", peer_name);
     }
 }
+#endif /* SOCKET_TLS_ENABLED */
 
 result_t socket_accept(socket_t *server, socket_t *client)
 {
-    result_t result = ok;
-    int err;
-
     memset(client, 0, sizeof(socket_t));
     socket_clear_fds(client);
     client->client_len = sizeof(client->sa_cli);
@@ -677,8 +727,12 @@ result_t socket_accept(socket_t *server, socket_t *client)
         return ok;
     }
 
+#if SOCKET_TLS_ENABLED
     /* ----------------------------------------------- */
     /* TCP connection is ready. Do server side SSL. */
+
+    result_t result = ok;
+    int err;
 
     client->tls.backend = tls_backend_new();
     if (client->tls.backend == NULL)
@@ -714,6 +768,9 @@ result_t socket_accept(socket_t *server, socket_t *client)
     }
 
     return result;
+#else
+    return error; /* unreachable: tls.enabled is always false under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }
 
 static result_t internal_socket_accept_async(void *user_args, task_t *my_task)
@@ -767,7 +824,7 @@ result_t socket_connect(socket_t *client)
 
         if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname), (const char * restrict)port_string, &hints, &servinfo)) != 0)
         {
-            log_error("getaddrinfo: %s", gai_strerror(rv));
+            log_error("getaddrinfo: %s", socket_gai_strerror(rv));
             return error;
         }
 
@@ -806,6 +863,7 @@ result_t socket_connect(socket_t *client)
             }
             else
             {
+#if SOCKET_TLS_ENABLED
             /* socket_init already allocated the TLS backend and ctx for
              * this client; we just attach a new SSL session to that ctx. */
             client->tls.backend->ssl = SSL_new(client->tls.backend->ctx);
@@ -884,6 +942,10 @@ result_t socket_connect(socket_t *client)
                     result = ok;
                 }
             }
+#else
+            (void)err;
+            result = error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
             } /* end of TLS-enabled branch */
         }
     }
@@ -932,6 +994,7 @@ result_t socket_read(socket_t *s, span_t buffer, span_t *out_read, span_t* remai
     }
     else
     {
+#if SOCKET_TLS_ENABLED
         int bytes_read;
 
         bytes_read = SSL_read(s->tls.backend->ssl, span_get_ptr(buffer), span_get_size(buffer));
@@ -971,6 +1034,9 @@ result_t socket_read(socket_t *s, span_t buffer, span_t *out_read, span_t* remai
                 break;
             };
         }
+#else
+        result = error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
     }
 
     return result;
@@ -1003,6 +1069,7 @@ result_t socket_write(socket_t *s, span_t data)
     }
     else
     {
+#if SOCKET_TLS_ENABLED
         result = ok;
 
         while (span_get_size(data) > 0)
@@ -1020,6 +1087,9 @@ result_t socket_write(socket_t *s, span_t data)
                 data = span_slice_to_end(data, n);
             }
         }
+#else
+        result = error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
     }
 
     return result;
@@ -1117,6 +1187,7 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
         return ok;
     }
 
+#if SOCKET_TLS_ENABLED
     /* Prime the TLS handshake. The caller must drive socket_handshake_nb
      * until it returns ok. */
     client->tls.backend = tls_backend_new();
@@ -1141,6 +1212,9 @@ result_t socket_accept_nb(socket_t* server, socket_t* client)
     client->io_want            = socket_io_want_read;
 
     return ok;
+#else
+    return error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }
 
 result_t socket_handshake_nb(socket_t* s)
@@ -1157,6 +1231,7 @@ result_t socket_handshake_nb(socket_t* s)
         s->io_want            = 0;
         return ok;
     }
+#if SOCKET_TLS_ENABLED
     if (s->tls.backend == NULL || s->tls.backend->ssl == NULL)
     {
         return invalid_argument;
@@ -1190,6 +1265,9 @@ result_t socket_handshake_nb(socket_t* s)
                       sslerr, strerror(errno));
             return error;
     }
+#else
+    return error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }
 
 result_t socket_connect_nb_begin(socket_t* client)
@@ -1215,7 +1293,7 @@ result_t socket_connect_nb_begin(socket_t* client)
     if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname),
                           (const char * restrict)port_string, &hints, &servinfo)) != 0)
     {
-        log_error("getaddrinfo: %s", gai_strerror(rv));
+        log_error("getaddrinfo: %s", socket_gai_strerror(rv));
         return error;
     }
 
@@ -1296,6 +1374,7 @@ result_t socket_connect_nb_continue(socket_t* client)
         client->io_want            = 0;
         return ok;
     }
+#if SOCKET_TLS_ENABLED
     if (client->tls.backend == NULL)
     {
         return error;
@@ -1325,6 +1404,9 @@ result_t socket_connect_nb_continue(socket_t* client)
         client->io_want = socket_io_want_read;
     }
     return ok;
+#else
+    return error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }
 
 result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
@@ -1365,6 +1447,7 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
         return error;
     }
 
+#if SOCKET_TLS_ENABLED
     ERR_clear_error();
     int n = SSL_write(s->tls.backend->ssl, span_get_ptr(data), (int)span_get_size(data));
     if (n > 0)
@@ -1394,6 +1477,9 @@ result_t socket_write_nb(socket_t* s, span_t data, uint32_t* out_written)
                       sslerr, strerror(errno));
             return error;
     }
+#else
+    return error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }
 
 result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
@@ -1431,6 +1517,7 @@ result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
         return error;
     }
 
+#if SOCKET_TLS_ENABLED
     if (s->tls.backend == NULL || s->tls.backend->ssl == NULL)
     {
         return invalid_argument;
@@ -1460,4 +1547,7 @@ result_t socket_read_nb(socket_t* s, void* dst, uint32_t cap,
                       sslerr, strerror(errno));
             return error;
     }
+#else
+    return error; /* unreachable under SOCKET_TLS_NONE */
+#endif /* SOCKET_TLS_ENABLED */
 }

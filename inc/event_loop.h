@@ -8,9 +8,9 @@
  *
  * The interface is intentionally tiny and platform-neutral. Backends:
  *
- *   - epoll (Linux, default)
+ *   - epoll  (Linux, default)
+ *   - select (portable: BSD, macOS, ESP-IDF / lwIP / FreeRTOS)
  *   - kqueue (BSD, future)
- *   - select / lwIP (FreeRTOS, future)
  *
  * The contract is "register a file descriptor with the events you care
  * about + a callback; run the loop; the loop invokes the callback when the
@@ -106,12 +106,37 @@ result_t event_loop_run_once(event_loop_t* loop, int timeout_ms);
  */
 result_t event_loop_stop(event_loop_t* loop);
 
+/* ------------------------------------------------------------------------- *
+ *                            Backend selection
+ *
+ * The loop has two interchangeable readiness backends:
+ *
+ *   - epoll  : Linux only. Scales to thousands of descriptors and wakes
+ *              instantly across threads via an eventfd.
+ *   - select : Portable fallback used on every other platform (BSD, macOS,
+ *              and -- crucially -- ESP-IDF / lwIP, which has no epoll). It
+ *              relies only on the POSIX/BSD-socket `select()` available in
+ *              lwIP and newlib, so no eventfd / pipe is required.
+ *
+ * Selection is automatic but can be forced at build time:
+ *
+ *   -DEVENT_LOOP_BACKEND_EPOLL=1   force epoll  (Linux only)
+ *   -DEVENT_LOOP_BACKEND_SELECT=1  force select (any platform)
+ * ------------------------------------------------------------------------- */
+#if !defined(EVENT_LOOP_BACKEND_EPOLL) && !defined(EVENT_LOOP_BACKEND_SELECT)
+#  if defined(__linux__)
+#    define EVENT_LOOP_BACKEND_EPOLL 1
+#  else
+#    define EVENT_LOOP_BACKEND_SELECT 1
+#  endif
+#endif
+
+#if defined(EVENT_LOOP_BACKEND_EPOLL) && defined(EVENT_LOOP_BACKEND_SELECT)
+#  error "event_loop: choose only one of EPOLL / SELECT backends"
+#endif
+
 /* Concrete struct laid out here so the http_server can embed it without a
  * heap allocation. Treat fields as private. */
-
-#if defined(__linux__)
-
-#include <pthread.h>
 
 typedef struct event_loop_entry
 {
@@ -121,10 +146,34 @@ typedef struct event_loop_entry
     void*                 user;
 } event_loop_entry_t;
 
+#if defined(EVENT_LOOP_BACKEND_EPOLL)
+
+#include <pthread.h>
+
 struct event_loop
 {
     int                 epfd;
     int                 wakefd;            /* eventfd for stop / cross-thread wake */
+    bool                running;
+    bool                stop_requested;
+    pthread_mutex_t     table_mutex;
+    event_loop_entry_t  table[EVENT_LOOP_MAX_FDS];
+};
+
+#elif defined(EVENT_LOOP_BACKEND_SELECT)
+
+#include <pthread.h>
+
+#ifndef EVENT_LOOP_SELECT_WAKE_INTERVAL_MS
+/* select() has no eventfd-style kick, so an infinite #event_loop_run wait is
+ * implemented as a sequence of bounded waits. #event_loop_stop just flips a
+ * flag; the loop observes it within (at most) this interval. Small enough to
+ * feel instant, large enough to stay idle. */
+#define EVENT_LOOP_SELECT_WAKE_INTERVAL_MS 50
+#endif
+
+struct event_loop
+{
     bool                running;
     bool                stop_requested;
     pthread_mutex_t     table_mutex;

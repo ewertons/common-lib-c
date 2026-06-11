@@ -4,11 +4,34 @@ project(common-lib-c)
 
 option(COMMON_LIB_C_BUILD_TESTS   "Build test executables (requires cmocka)" ON)
 
+# ---------------------------------------------------------------------------
+# Portability switches.
+#
+#   COMMON_LIB_C_TLS_BACKEND        OPENSSL (default) | NONE
+#       NONE drops the OpenSSL dependency entirely (plain TCP only). Required
+#       on targets without OpenSSL such as ESP-IDF (mbedTLS) or bare lwIP.
+#
+#   COMMON_LIB_C_EVENT_LOOP_BACKEND AUTO (default) | EPOLL | SELECT
+#       AUTO selects epoll on Linux and select() elsewhere. SELECT forces the
+#       portable select() backend (e.g. lwIP, which lacks epoll/eventfd).
+# ---------------------------------------------------------------------------
+set(COMMON_LIB_C_TLS_BACKEND "OPENSSL" CACHE STRING "TLS backend: OPENSSL or NONE")
+set_property(CACHE COMMON_LIB_C_TLS_BACKEND PROPERTY STRINGS OPENSSL NONE)
+
+set(COMMON_LIB_C_EVENT_LOOP_BACKEND "AUTO" CACHE STRING "Event loop backend: AUTO, EPOLL or SELECT")
+set_property(CACHE COMMON_LIB_C_EVENT_LOOP_BACKEND PROPERTY STRINGS AUTO EPOLL SELECT)
+
 if(${COMMON_LIB_C_BUILD_TESTS})
     find_package(cmocka CONFIG REQUIRED)
 endif()
 
-find_package(OpenSSL REQUIRED)
+if(COMMON_LIB_C_TLS_BACKEND STREQUAL "OPENSSL")
+    find_package(OpenSSL REQUIRED)
+elseif(COMMON_LIB_C_TLS_BACKEND STREQUAL "NONE")
+    message(STATUS "common-lib-c: TLS backend disabled (SOCKET_TLS_NONE)")
+else()
+    message(FATAL_ERROR "COMMON_LIB_C_TLS_BACKEND must be OPENSSL or NONE, got '${COMMON_LIB_C_TLS_BACKEND}'")
+endif()
 
 enable_testing()
 
@@ -25,10 +48,10 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/list.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/logging.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/niceties.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/socket.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/socketx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/socket_stream.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/stack.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/stackx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stream.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/task.h
@@ -49,7 +72,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket_stream.c
     ${CMAKE_CURRENT_LIST_DIR}/src/span.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/stackx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/task.c
 )
@@ -64,11 +87,56 @@ target_include_directories (common-lib-c
   $<INSTALL_INTERFACE:include/common-lib-c>
 )
 
-target_link_libraries(
-    common-lib-c
-      ${OPENSSL_LIBRARIES}
-      m
-)
+# ---------------------------------------------------------------------------
+# Strict compiler diagnostics.
+#
+# The library is compiled with the highest practical warning level and treats
+# warnings as errors so regressions are caught at build time. Flags are applied
+# PRIVATE so they do not leak onto consumers of the library.
+# ---------------------------------------------------------------------------
+option(COMMON_LIB_C_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+
+if(MSVC)
+    target_compile_options(common-lib-c PRIVATE /W4 /permissive-)
+    if(COMMON_LIB_C_WARNINGS_AS_ERRORS)
+        target_compile_options(common-lib-c PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(common-lib-c PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wcast-qual
+        -Wcast-align
+        -Wundef
+        -Wwrite-strings
+        -Wpointer-arith
+        -Wstrict-prototypes
+        -Wmissing-prototypes
+        -Wmissing-declarations
+        -Wredundant-decls
+        -Wdouble-promotion
+        -Wformat=2
+        -Wnull-dereference
+    )
+    if(COMMON_LIB_C_WARNINGS_AS_ERRORS)
+        target_compile_options(common-lib-c PRIVATE -Werror)
+    endif()
+endif()
+
+if(COMMON_LIB_C_TLS_BACKEND STREQUAL "NONE")
+    target_compile_definitions(common-lib-c PUBLIC SOCKET_TLS_NONE=1)
+    target_link_libraries(common-lib-c m)
+else()
+    target_link_libraries(common-lib-c ${OPENSSL_LIBRARIES} m)
+endif()
+
+if(COMMON_LIB_C_EVENT_LOOP_BACKEND STREQUAL "SELECT")
+    target_compile_definitions(common-lib-c PUBLIC EVENT_LOOP_BACKEND_SELECT=1)
+elseif(COMMON_LIB_C_EVENT_LOOP_BACKEND STREQUAL "EPOLL")
+    target_compile_definitions(common-lib-c PUBLIC EVENT_LOOP_BACKEND_EPOLL=1)
+endif()
 
 if(${COMMON_LIB_C_BUILD_TESTS})
     add_subdirectory(tests)

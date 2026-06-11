@@ -1,5 +1,5 @@
-#ifndef SOCKET_H
-#define SOCKET_H
+#ifndef COMMON_LIB_C_SOCKET_H
+#define COMMON_LIB_C_SOCKET_H
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -32,10 +32,29 @@
  * Backend selection (build-time):
  *   - SOCKET_TLS_OPENSSL  -- default; links against libssl/libcrypto.
  *   - SOCKET_TLS_MBEDTLS  -- (future) drop-in replacement.
- *   - SOCKET_TLS_NONE     -- (future) plain-TCP-only build, no TLS at
- *                            all; tls.enabled=true returns error.
+ *   - SOCKET_TLS_NONE     -- plain-TCP-only build, no TLS at all. socket_init
+ *                            with tls.enable=true returns an error. Used on
+ *                            targets without an OpenSSL toolchain (e.g.
+ *                            ESP-IDF, where TLS would come from mbedTLS).
  * ------------------------------------------------------------------------- */
 typedef struct tls_backend tls_backend_t;
+
+/* Resolve the backend. Exactly one of SOCKET_TLS_OPENSSL / SOCKET_TLS_NONE
+ * is active; SOCKET_TLS_ENABLED is the convenience predicate used by the
+ * implementation to compile-out all TLS code paths. */
+#if !defined(SOCKET_TLS_OPENSSL) && !defined(SOCKET_TLS_NONE)
+#  define SOCKET_TLS_OPENSSL 1
+#endif
+
+#if defined(SOCKET_TLS_OPENSSL) && defined(SOCKET_TLS_NONE)
+#  error "socket: choose only one of SOCKET_TLS_OPENSSL / SOCKET_TLS_NONE"
+#endif
+
+#if defined(SOCKET_TLS_OPENSSL)
+#  define SOCKET_TLS_ENABLED 1
+#else
+#  define SOCKET_TLS_ENABLED 0
+#endif
 
 #define DEFAULT_LISTENING_PORT 8234
 
@@ -108,7 +127,7 @@ typedef struct socket
     struct socket* parent;
 } socket_t;
 
-static inline socket_config_t socket_get_default_secure_server_config()
+static inline socket_config_t socket_get_default_secure_server_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_server;
@@ -117,7 +136,7 @@ static inline socket_config_t socket_get_default_secure_server_config()
     return config;
 }
 
-static inline socket_config_t socket_get_default_secure_client_config()
+static inline socket_config_t socket_get_default_secure_client_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_client;
@@ -129,7 +148,7 @@ static inline socket_config_t socket_get_default_secure_client_config()
 /* Plain (no-TLS) variants. Identical to the secure helpers above except
  * that tls.enable is false; useful for embedded testing or HTTP-only
  * deployments. */
-static inline socket_config_t socket_get_default_plain_server_config()
+static inline socket_config_t socket_get_default_plain_server_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_server;
@@ -138,7 +157,7 @@ static inline socket_config_t socket_get_default_plain_server_config()
     return config;
 }
 
-static inline socket_config_t socket_get_default_plain_client_config()
+static inline socket_config_t socket_get_default_plain_client_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_client;
@@ -230,4 +249,4 @@ result_t socket_write_nb(socket_t* socket, span_t data, uint32_t* out_written);
 result_t socket_read_nb(socket_t* socket, void* dst, uint32_t cap,
                         uint32_t* out_received);
 
-#endif // SOCKET_H
+#endif // COMMON_LIB_C_SOCKET_H
