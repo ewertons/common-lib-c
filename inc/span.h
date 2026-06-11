@@ -49,7 +49,7 @@ int span_set(span_t span, uint32_t position, uint8_t value);
 
 #define span_from_str_literal(X) \
   (span_t){ \
-      .ptr = (uint8_t*)X, \
+      .ptr = (uint8_t*)(uintptr_t)(X), \
       .length = strlitlen(X) \
   }
 

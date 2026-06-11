@@ -51,7 +51,7 @@ set(header_files
     ${CMAKE_CURRENT_LIST_DIR}/inc/socketx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/socket_stream.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/span.h
-    ${CMAKE_CURRENT_LIST_DIR}/inc/stack.h
+    ${CMAKE_CURRENT_LIST_DIR}/inc/stackx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stream.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/stringx.h
     ${CMAKE_CURRENT_LIST_DIR}/inc/task.h
@@ -72,7 +72,7 @@ set(source_files
     ${CMAKE_CURRENT_LIST_DIR}/src/socket.c
     ${CMAKE_CURRENT_LIST_DIR}/src/socket_stream.c
     ${CMAKE_CURRENT_LIST_DIR}/src/span.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/stack.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/stackx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/stringx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/task.c
 )
@@ -86,6 +86,44 @@ target_include_directories (common-lib-c
   $<BUILD_INTERFACE:${COMMON_LIB_C_INC_DIR}>
   $<INSTALL_INTERFACE:include/common-lib-c>
 )
+
+# ---------------------------------------------------------------------------
+# Strict compiler diagnostics.
+#
+# The library is compiled with the highest practical warning level and treats
+# warnings as errors so regressions are caught at build time. Flags are applied
+# PRIVATE so they do not leak onto consumers of the library.
+# ---------------------------------------------------------------------------
+option(COMMON_LIB_C_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+
+if(MSVC)
+    target_compile_options(common-lib-c PRIVATE /W4 /permissive-)
+    if(COMMON_LIB_C_WARNINGS_AS_ERRORS)
+        target_compile_options(common-lib-c PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(common-lib-c PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wcast-qual
+        -Wcast-align
+        -Wundef
+        -Wwrite-strings
+        -Wpointer-arith
+        -Wstrict-prototypes
+        -Wmissing-prototypes
+        -Wmissing-declarations
+        -Wredundant-decls
+        -Wdouble-promotion
+        -Wformat=2
+        -Wnull-dereference
+    )
+    if(COMMON_LIB_C_WARNINGS_AS_ERRORS)
+        target_compile_options(common-lib-c PRIVATE -Werror)
+    endif()
+endif()
 
 if(COMMON_LIB_C_TLS_BACKEND STREQUAL "NONE")
     target_compile_definitions(common-lib-c PUBLIC SOCKET_TLS_NONE=1)

@@ -14,7 +14,7 @@ typedef struct CIRCULAR_LIST_STRUCT
 } CIRCULAR_LIST;
 
 
-CIRCULAR_LIST_HANDLE circular_list_create()
+CIRCULAR_LIST_HANDLE circular_list_create(void)
 {
     CIRCULAR_LIST* result;
 

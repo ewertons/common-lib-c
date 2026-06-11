@@ -127,7 +127,7 @@ typedef struct socket
     struct socket* parent;
 } socket_t;
 
-static inline socket_config_t socket_get_default_secure_server_config()
+static inline socket_config_t socket_get_default_secure_server_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_server;
@@ -136,7 +136,7 @@ static inline socket_config_t socket_get_default_secure_server_config()
     return config;
 }
 
-static inline socket_config_t socket_get_default_secure_client_config()
+static inline socket_config_t socket_get_default_secure_client_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_client;
@@ -148,7 +148,7 @@ static inline socket_config_t socket_get_default_secure_client_config()
 /* Plain (no-TLS) variants. Identical to the secure helpers above except
  * that tls.enable is false; useful for embedded testing or HTTP-only
  * deployments. */
-static inline socket_config_t socket_get_default_plain_server_config()
+static inline socket_config_t socket_get_default_plain_server_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_server;
@@ -157,7 +157,7 @@ static inline socket_config_t socket_get_default_plain_server_config()
     return config;
 }
 
-static inline socket_config_t socket_get_default_plain_client_config()
+static inline socket_config_t socket_get_default_plain_client_config(void)
 {
     socket_config_t config = { 0 };
     config.role = socket_role_client;

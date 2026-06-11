@@ -1,16 +1,9 @@
 #include <string.h>
 
 #include "bst_redblack.h"
-#include "stack.h"
+#include "stackx.h"
 #include "list.h"
 #include "niceties.h"
-
-static bst_rb_node_t* node_create(int value)
-{
-    bst_rb_node_t* new_node = calloc(1, sizeof(bst_rb_node_t));
-    new_node->value = value;
-    return new_node;
-}
 
 bst_rb_node_t* bst_rb_add(bst_rb_node_t* root, int value)
 {
@@ -90,10 +83,10 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
     {
         if (order == bst_search_order_dfs_pre_order)
         {
-            clc_stack_t stack;
+            stackx_t stack;
             bst_rb_node_t* node = root;
 
-            stack_init(&stack, sizeof(bst_rb_node_t*), 1);
+            stackx_init(&stack, sizeof(bst_rb_node_t*), 1);
 
             while(true)
             {
@@ -103,7 +96,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
 
                     if (node->right != NULL)
                     {
-                        if (stack_push(&stack, &(node->right)) != OK)
+                        if (stackx_push(&stack, &(node->right)) != OK)
                         {
                             return;
                         }
@@ -111,9 +104,9 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
 
                     node = node->left;
                 }
-                else if (stack_get_count(&stack) > 0)
+                else if (stackx_get_count(&stack) > 0)
                 {
-                    if (stack_pop(&stack, &node) != OK)
+                    if (stackx_pop(&stack, &node) != OK)
                     {
                         return;
                     }
@@ -124,29 +117,29 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                 }
             }
 
-            stack_deinit(&stack);
+            stackx_deinit(&stack);
         }
         else if (order == bst_search_order_dfs_in_order)
         {
-            clc_stack_t stack;
+            stackx_t stack;
             bst_rb_node_t* node = root;
 
-            stack_init(&stack, sizeof(bst_rb_node_t*), 1);
+            stackx_init(&stack, sizeof(bst_rb_node_t*), 1);
 
             while(true)
             {
                 if (node != NULL)
                 {
-                    if (stack_push(&stack, &node) != OK)
+                    if (stackx_push(&stack, &node) != OK)
                     {
                         return;
                     }
 
                     node = node->left;
                 }
-                else if (stack_get_count(&stack) > 0)
+                else if (stackx_get_count(&stack) > 0)
                 {
-                    if (stack_pop(&stack, &node) != OK)
+                    if (stackx_pop(&stack, &node) != OK)
                     {
                         return;
                     }
@@ -161,31 +154,31 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                 }
             }
 
-            stack_deinit(&stack);
+            stackx_deinit(&stack);
         }
         else if (order == bst_search_order_dfs_post_order)
         {
-            clc_stack_t stack;
+            stackx_t stack;
             bst_rb_node_t* previous_node = NULL;
 
-            stack_init(&stack, sizeof(bst_rb_node_t*), 1);
+            stackx_init(&stack, sizeof(bst_rb_node_t*), 1);
 
             while(true)
             {
                 if (root != NULL)
                 {
-                    if (stack_push(&stack, &root) != OK)
+                    if (stackx_push(&stack, &root) != OK)
                     {
                         break;
                     }
 
                     root = root->left;
                 }
-                else if (stack_get_count(&stack) > 0)
+                else if (stackx_get_count(&stack) > 0)
                 {
                     bst_rb_node_t* current_node;
 
-                    if (stack_top(&stack, &current_node) != OK)
+                    if (stackx_top(&stack, &current_node) != OK)
                     {
                         break;
                     }
@@ -199,7 +192,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                         callback(current_node, context);
                         previous_node = current_node;
 
-                        if (stack_pop(&stack, NULL) != OK)
+                        if (stackx_pop(&stack, NULL) != OK)
                         {
                             break;
                         }
@@ -211,7 +204,7 @@ void bst_rb_traverse(bst_rb_node_t* root, bst_search_order_t order, bst_rb_trave
                 }
             }
 
-            stack_deinit(&stack);
+            stackx_deinit(&stack);
         }
         else // if (order == bst_search_order_bfs)
         {

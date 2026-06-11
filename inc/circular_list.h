@@ -10,7 +10,7 @@ typedef struct LIST_NODE_STRUCT* LIST_NODE_HANDLE;
 typedef void(*LIST_ACTION)(LIST_NODE_HANDLE node, void* context, bool *continue_processing);
 typedef bool (*REMOVE_CONDITION)(LIST_NODE_HANDLE node, void* context, bool *continue_processing);
 
-extern CIRCULAR_LIST_HANDLE circular_list_create();
+extern CIRCULAR_LIST_HANDLE circular_list_create(void);
 extern void circular_list_destroy(CIRCULAR_LIST_HANDLE list);
 extern LIST_NODE_HANDLE circular_list_add(CIRCULAR_LIST_HANDLE list, void* value);
 extern int circular_list_remove(CIRCULAR_LIST_HANDLE list, LIST_NODE_HANDLE node);
