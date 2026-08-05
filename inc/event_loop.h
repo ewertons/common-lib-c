@@ -106,6 +106,24 @@ result_t event_loop_run_once(event_loop_t* loop, int timeout_ms);
  */
 result_t event_loop_stop(event_loop_t* loop);
 
+/**
+ * @brief Wake the loop *without* stopping it. Safe to call from any thread.
+ *
+ * Intended for cross-thread completions: a worker thread mutates shared
+ * state and then calls this so the loop thread comes back around and
+ * flushes the result. Without it, work queued from another thread would
+ * not be noticed until the loop happened to wake for some other reason.
+ *
+ * Wakes coalesce: several calls made before the loop drains the signal
+ * produce a single extra iteration, so callers may signal freely.
+ *
+ * On the select backend there is no eventfd to signal. The run loop
+ * already re-evaluates between bounded waits, so this succeeds without
+ * doing any work and the wake is observed within
+ * #EVENT_LOOP_SELECT_WAKE_INTERVAL_MS. Callers stay backend-agnostic.
+ */
+result_t event_loop_wake(event_loop_t* loop);
+
 /* ------------------------------------------------------------------------- *
  *                            Backend selection
  *

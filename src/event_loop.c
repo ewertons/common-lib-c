@@ -336,6 +336,29 @@ result_t event_loop_stop(event_loop_t* loop)
     return ok;
 }
 
+result_t event_loop_wake(event_loop_t* loop)
+{
+    if (loop == NULL)
+    {
+        return invalid_argument;
+    }
+    if (loop->wakefd == -1)
+    {
+        return error;
+    }
+
+    uint64_t one = 1;
+    /* The same eventfd the stop path uses, minus stop_requested: this is
+     * a pure "come back around" kick. eventfd counters accumulate, so
+     * repeated wakes issued before the loop drains collapse into a single
+     * wakeup -- exactly the coalescing the contract promises. glibc marks
+     * write() warn_unused_result, so capture into a discarded local
+     * rather than a (void) cast (which the attribute ignores). */
+    ssize_t w = write(loop->wakefd, &one, sizeof(one));
+    (void)w;
+    return ok;
+}
+
 /* ========================================================================= *
  *                       select backend (portable / lwIP)
  *
@@ -589,6 +612,20 @@ result_t event_loop_stop(event_loop_t* loop)
     }
     /* The run loop polls this flag between bounded select() waits. */
     loop->stop_requested = true;
+    return ok;
+}
+
+result_t event_loop_wake(event_loop_t* loop)
+{
+    if (loop == NULL)
+    {
+        return invalid_argument;
+    }
+    /* Nothing to signal: there is no eventfd on this backend. The run
+     * loop already re-evaluates between bounded select() waits, so work
+     * queued from another thread is picked up within
+     * EVENT_LOOP_SELECT_WAKE_INTERVAL_MS. Reporting success keeps callers
+     * free of backend conditionals. */
     return ok;
 }
 
