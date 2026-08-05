@@ -6,6 +6,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <time.h>
 
 #include <cmocka.h>
 
@@ -107,12 +109,108 @@ static void event_loop_stop_from_other_thread_wakes_loop(void** state)
     assert_int_equal(event_loop_deinit(&loop), ok);
 }
 
+static void event_loop_wake_rejects_null(void** state)
+{
+    (void)state;
+    assert_int_equal(event_loop_wake(NULL), invalid_argument);
+}
+
+static void event_loop_wake_does_not_request_stop(void** state)
+{
+    (void)state;
+    /* The whole point of wake(): it kicks the loop awake but must leave it
+     * running. If it set stop_requested like stop() does, a cross-thread
+     * completion would tear the server down instead of flushing a
+     * response. */
+    event_loop_t loop;
+    assert_int_equal(event_loop_init(&loop), ok);
+
+    assert_int_equal(event_loop_wake(&loop), ok);
+    assert_false(loop.stop_requested);
+
+    /* Draining the kick must not change that. */
+    assert_int_equal(event_loop_run_once(&loop, 0), ok);
+    assert_false(loop.stop_requested);
+
+    assert_int_equal(event_loop_deinit(&loop), ok);
+}
+
+typedef struct wake_ctx
+{
+    event_loop_t* loop;
+    unsigned      delay_us;
+} wake_ctx_t;
+
+static void* wake_after_delay(void* arg)
+{
+    wake_ctx_t* ctx = (wake_ctx_t*)arg;
+    usleep(ctx->delay_us);
+    (void)event_loop_wake(ctx->loop);
+    return NULL;
+}
+
+static void event_loop_wake_from_other_thread_unblocks_run_once(void** state)
+{
+    (void)state;
+    /* The property the deferred-response feature rests on: a worker thread
+     * can pull the loop thread out of its wait. Runs on both backends, but
+     * each has to be driven the way its contract actually describes. */
+    event_loop_t loop;
+    assert_int_equal(event_loop_init(&loop), ok);
+
+    wake_ctx_t ctx;
+    ctx.loop     = &loop;
+    ctx.delay_us = 50 * 1000;
+
+    pthread_t thread;
+    assert_int_equal(pthread_create(&thread, NULL, wake_after_delay, &ctx), 0);
+
+    struct timespec t0;
+    struct timespec t1;
+    assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &t0), 0);
+
+#if defined(EVENT_LOOP_BACKEND_EPOLL)
+    /* A finite ceiling rather than -1: if the eventfd kick never lands we
+     * fall out on the timeout and fail on elapsed time with a useful
+     * number, instead of hanging until ctest kills the run. */
+    assert_int_equal(event_loop_run_once(&loop, 5000), ok);
+#else
+    /* select has nothing to signal, so a wake cannot cut short a wait that
+     * is already bounded -- asking for 5000ms here would simply take
+     * 5000ms. What the backend guarantees is that an *infinite* wait is
+     * internally capped at EVENT_LOOP_SELECT_WAKE_INTERVAL_MS, and that
+     * cap is the entire reason a cross-thread post is observable at all.
+     * Before this change an infinite wait here blocked forever. */
+    assert_int_equal(event_loop_run_once(&loop, -1), ok);
+#endif
+
+    assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &t1), 0);
+    assert_int_equal(pthread_join(thread, NULL), 0);
+
+    /* Reduced to nanoseconds first, then converted once. Doing it per-field
+     * is also correct -- a negative nanosecond delta is exactly offset by
+     * the carried second -- but computing a single quantity leaves nothing
+     * to second-guess. */
+    long long elapsed_ms =
+        ((long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL
+         + (long long)(t1.tv_nsec - t0.tv_nsec)) / 1000000LL;
+
+    assert_true(elapsed_ms >= 0);
+    assert_true(elapsed_ms < 2000);
+    assert_false(loop.stop_requested);
+
+    assert_int_equal(event_loop_deinit(&loop), ok);
+}
+
 int test_event_loop()
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(event_loop_run_once_pipe_read_succeed),
         cmocka_unit_test(event_loop_modify_and_unregister_succeed),
         cmocka_unit_test(event_loop_stop_from_other_thread_wakes_loop),
+        cmocka_unit_test(event_loop_wake_rejects_null),
+        cmocka_unit_test(event_loop_wake_does_not_request_stop),
+        cmocka_unit_test(event_loop_wake_from_other_thread_unblocks_run_once),
     };
     return cmocka_run_group_tests_name("event_loop", tests, NULL, NULL);
 }

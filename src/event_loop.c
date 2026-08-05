@@ -336,6 +336,57 @@ result_t event_loop_stop(event_loop_t* loop)
     return ok;
 }
 
+result_t event_loop_wake(event_loop_t* loop)
+{
+    if (loop == NULL)
+    {
+        return invalid_argument;
+    }
+    if (loop->wakefd == -1)
+    {
+        return error;
+    }
+
+    uint64_t one = 1;
+
+    /* The same eventfd the stop path uses, minus stop_requested: this is
+     * a pure "come back around" kick. eventfd counters accumulate, so
+     * repeated wakes issued before the loop drains collapse into a single
+     * wakeup -- exactly the coalescing the contract promises.
+     *
+     * Unlike stop(), the write IS the whole mechanism here: stop() also
+     * sets a flag the loop polls, so a lost write there still gets
+     * noticed, whereas a lost wake is simply a wake that never happens.
+     * Reporting a success we did not achieve would turn that into a silent
+     * stall, so the result is inspected rather than discarded. */
+    for (;;)
+    {
+        ssize_t written = write(loop->wakefd, &one, sizeof(one));
+
+        if (written == (ssize_t)sizeof(one))
+        {
+            return ok;
+        }
+        if (written < 0 && errno == EINTR)
+        {
+            /* Interrupted before the counter moved, so nothing was
+             * delivered yet. */
+            continue;
+        }
+        if (written < 0 && errno == EAGAIN)
+        {
+            /* The counter is saturated, which can only mean an earlier
+             * wake is still undrained. The descriptor is therefore already
+             * readable and the loop is coming back around regardless, so
+             * the caller's intent is satisfied. */
+            return ok;
+        }
+
+        log_error("event_loop_wake write (%s)", strerror(errno));
+        return error;
+    }
+}
+
 /* ========================================================================= *
  *                       select backend (portable / lwIP)
  *
@@ -497,16 +548,24 @@ result_t event_loop_run_once(event_loop_t* loop, int timeout_ms)
     }
     (void)pthread_mutex_unlock(&loop->table_mutex);
 
-    struct timeval  tv;
-    struct timeval* ptv = NULL;
-    if (timeout_ms >= 0)
+    struct timeval tv;
+    int            wait_ms = timeout_ms;
+
+    /* An unbounded select() cannot be interrupted on this backend: there
+     * is no eventfd to signal, so a caller parked here would never observe
+     * event_loop_wake() or event_loop_stop() from another thread. Bounding
+     * the wait is what makes both of those work no matter how the loop is
+     * driven -- through event_loop_run(), or through a caller's own
+     * event_loop_run_once(). Previously only the former was safe. */
+    if (wait_ms < 0)
     {
-        tv.tv_sec  = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
-        ptv = &tv;
+        wait_ms = EVENT_LOOP_SELECT_WAKE_INTERVAL_MS;
     }
 
-    int n = select(maxfd + 1, &readfds, &writefds, &errorfds, ptv);
+    tv.tv_sec  = wait_ms / 1000;
+    tv.tv_usec = (wait_ms % 1000) * 1000;
+
+    int n = select(maxfd + 1, &readfds, &writefds, &errorfds, &tv);
     if (n == -1)
     {
         if (errno == EINTR)
@@ -589,6 +648,20 @@ result_t event_loop_stop(event_loop_t* loop)
     }
     /* The run loop polls this flag between bounded select() waits. */
     loop->stop_requested = true;
+    return ok;
+}
+
+result_t event_loop_wake(event_loop_t* loop)
+{
+    if (loop == NULL)
+    {
+        return invalid_argument;
+    }
+    /* Nothing to signal: there is no eventfd on this backend. The run
+     * loop already re-evaluates between bounded select() waits, so work
+     * queued from another thread is picked up within
+     * EVENT_LOOP_SELECT_WAKE_INTERVAL_MS. Reporting success keeps callers
+     * free of backend conditionals. */
     return ok;
 }
 

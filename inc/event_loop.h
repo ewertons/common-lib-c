@@ -106,6 +106,37 @@ result_t event_loop_run_once(event_loop_t* loop, int timeout_ms);
  */
 result_t event_loop_stop(event_loop_t* loop);
 
+/**
+ * @brief Wake the loop *without* stopping it. Safe to call from any thread.
+ *
+ * Intended for cross-thread completions: a worker thread mutates shared
+ * state and then calls this so the loop thread comes back around and
+ * flushes the result. Without it, work queued from another thread would
+ * not be noticed until the loop happened to wake for some other reason.
+ *
+ * Wakes coalesce: several calls made before the loop drains the signal
+ * produce a single extra iteration, so callers may signal freely.
+ *
+ * Backend behaviour:
+ *   - epoll : signals an eventfd, so the loop returns immediately.
+ *   - select: there is nothing to signal, so instead that backend never
+ *             waits longer than #EVENT_LOOP_SELECT_WAKE_INTERVAL_MS at a
+ *             time -- including when asked for an infinite timeout -- and
+ *             the wake is observed within that interval. This holds
+ *             however the loop is driven, through #event_loop_run or
+ *             through a caller's own #event_loop_run_once.
+ *
+ * Callers therefore stay backend-agnostic.
+ *
+ * @return #ok if a wake was delivered, or one was already pending, or the
+ *         backend needs no signal (select). #invalid_argument for a NULL
+ *         loop. #error if the kick could not be delivered on a backend
+ *         that uses one. Worth handling: unlike #event_loop_stop, which
+ *         also sets a flag the loop polls, that signal is the entire
+ *         mechanism here, so a lost one is a stall rather than a delay.
+ */
+result_t event_loop_wake(event_loop_t* loop);
+
 /* ------------------------------------------------------------------------- *
  *                            Backend selection
  *
