@@ -135,8 +135,6 @@ static void event_loop_wake_does_not_request_stop(void** state)
     assert_int_equal(event_loop_deinit(&loop), ok);
 }
 
-#if defined(EVENT_LOOP_BACKEND_EPOLL)
-
 typedef struct wake_ctx
 {
     event_loop_t* loop;
@@ -155,9 +153,8 @@ static void event_loop_wake_from_other_thread_unblocks_run_once(void** state)
 {
     (void)state;
     /* The property the deferred-response feature rests on: a worker thread
-     * can pull the loop thread out of its wait. Guarded to epoll because
-     * the select backend has no eventfd and instead relies on its bounded
-     * wait interval -- documented behaviour, not a wake it can assert. */
+     * can pull the loop thread out of its wait. Runs on both backends, but
+     * each has to be driven the way its contract actually describes. */
     event_loop_t loop;
     assert_int_equal(event_loop_init(&loop), ok);
 
@@ -172,23 +169,38 @@ static void event_loop_wake_from_other_thread_unblocks_run_once(void** state)
     struct timespec t1;
     assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &t0), 0);
 
-    /* A finite ceiling rather than -1: if the wake never lands we fall out
-     * on the timeout and fail on elapsed time with a useful number,
-     * instead of hanging until ctest kills the run. */
+#if defined(EVENT_LOOP_BACKEND_EPOLL)
+    /* A finite ceiling rather than -1: if the eventfd kick never lands we
+     * fall out on the timeout and fail on elapsed time with a useful
+     * number, instead of hanging until ctest kills the run. */
     assert_int_equal(event_loop_run_once(&loop, 5000), ok);
+#else
+    /* select has nothing to signal, so a wake cannot cut short a wait that
+     * is already bounded -- asking for 5000ms here would simply take
+     * 5000ms. What the backend guarantees is that an *infinite* wait is
+     * internally capped at EVENT_LOOP_SELECT_WAKE_INTERVAL_MS, and that
+     * cap is the entire reason a cross-thread post is observable at all.
+     * Before this change an infinite wait here blocked forever. */
+    assert_int_equal(event_loop_run_once(&loop, -1), ok);
+#endif
 
     assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &t1), 0);
     assert_int_equal(pthread_join(thread, NULL), 0);
 
-    long elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000
-                    + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+    /* Reduced to nanoseconds first, then converted once. Doing it per-field
+     * is also correct -- a negative nanosecond delta is exactly offset by
+     * the carried second -- but computing a single quantity leaves nothing
+     * to second-guess. */
+    long long elapsed_ms =
+        ((long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL
+         + (long long)(t1.tv_nsec - t0.tv_nsec)) / 1000000LL;
+
+    assert_true(elapsed_ms >= 0);
     assert_true(elapsed_ms < 2000);
     assert_false(loop.stop_requested);
 
     assert_int_equal(event_loop_deinit(&loop), ok);
 }
-
-#endif /* EVENT_LOOP_BACKEND_EPOLL */
 
 int test_event_loop()
 {
@@ -198,9 +210,7 @@ int test_event_loop()
         cmocka_unit_test(event_loop_stop_from_other_thread_wakes_loop),
         cmocka_unit_test(event_loop_wake_rejects_null),
         cmocka_unit_test(event_loop_wake_does_not_request_stop),
-#if defined(EVENT_LOOP_BACKEND_EPOLL)
         cmocka_unit_test(event_loop_wake_from_other_thread_unblocks_run_once),
-#endif
     };
     return cmocka_run_group_tests_name("event_loop", tests, NULL, NULL);
 }
