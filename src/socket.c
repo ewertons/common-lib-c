@@ -599,6 +599,19 @@ result_t socket_init(socket_t *s, socket_config_t *config)
         memset(&s->sa_serv, '\0', sizeof(s->sa_serv));
         s->sa_serv.sin_family = AF_INET;
         s->sa_serv.sin_addr.s_addr = INADDR_ANY;
+
+        /* An explicit address restricts the listener to one interface. A bad
+         * one is refused rather than quietly falling back to every interface,
+         * because the whole point of setting it is to not be reachable. */
+        if (config->local.address != NULL && config->local.address[0] != '\0')
+        {
+            if (inet_pton(AF_INET, config->local.address, &s->sa_serv.sin_addr) != 1)
+            {
+                log_error("bind address '%s' is not an IPv4 address", config->local.address);
+                return error;
+            }
+        }
+
         s->sa_serv.sin_port = htons(config->local.port); /* Server Port number */
 
         socket_result = bind(s->listen_sd, (struct sockaddr *)&s->sa_serv, sizeof(s->sa_serv));
