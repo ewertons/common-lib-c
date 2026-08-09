@@ -67,6 +67,12 @@ typedef enum socket_role
 typedef struct local_host_config
 {
     int port;
+    /* Address to bind the listener to, e.g. "127.0.0.1". NULL or empty binds
+     * every interface, which is the historical behaviour and stays the
+     * default. Worth being able to restrict: a service that is only meant to
+     * be reached through a tunnel has no business being listed by a port scan
+     * of the machine. */
+    const char* address;
 } local_host_config_t;
 
 typedef struct remote_host_config
