@@ -246,6 +246,11 @@ static result_t reader_process_number(json_reader_t* r)
     uint32_t size  = span_get_size(token);
     uint32_t i     = 0;
 
+    /* Every other read in this function is guarded by `size`; the first one
+     * was not. An empty span yields a NULL pointer, so `p[i]` below would
+     * dereference it. reader_process_literal guards the same way. */
+    if (size == 0) return unexpected_end;
+
     /* Optional leading minus. */
     if (p[i] == '-')
     {

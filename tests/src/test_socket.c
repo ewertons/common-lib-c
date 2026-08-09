@@ -112,6 +112,100 @@ static void socket_get_default_secure_client_config_has_expected_values(void** s
     assert_int_equal(0, cfg.local.port);
 }
 
+/* --- local.address ------------------------------------------------------ */
+
+/* TLS is off in these: they exercise bind(), not the handshake, and the TLS
+ * fixtures under /tmp are not present on every machine that runs the suite. */
+static socket_config_t plain_listener(int port, const char* address)
+{
+    socket_config_t cfg = socket_get_default_secure_server_config();
+    cfg.tls.enable    = false;
+    cfg.local.port    = port;
+    cfg.local.address = address;
+    return cfg;
+}
+
+static void socket_bind_address_unset_binds_every_interface(void** state)
+{
+    (void)state;
+    socket_t listener;
+    socket_config_t cfg = plain_listener(5581, NULL);
+
+    assert_int_equal(socket_init(&listener, &cfg), ok);
+    assert_int_equal(socket_deinit(&listener), ok);
+}
+
+static void socket_bind_address_empty_binds_every_interface(void** state)
+{
+    (void)state;
+    socket_t listener;
+    socket_config_t cfg = plain_listener(5582, "");
+
+    assert_int_equal(socket_init(&listener, &cfg), ok);
+    assert_int_equal(socket_deinit(&listener), ok);
+}
+
+static void socket_bind_address_loopback_succeeds(void** state)
+{
+    (void)state;
+    socket_t listener;
+    socket_config_t cfg = plain_listener(5583, "127.0.0.1");
+
+    assert_int_equal(socket_init(&listener, &cfg), ok);
+    assert_int_equal(socket_deinit(&listener), ok);
+}
+
+/* The security-relevant one. A rejected address must not fall back to binding
+ * every interface, and must not leave anything bound behind: the whole point
+ * of the field is to NOT be reachable, so a silent 0.0.0.0 would invert it. */
+static void socket_bind_address_malformed_is_rejected_without_binding(void** state)
+{
+    (void)state;
+    socket_t rejected;
+    socket_config_t bad = plain_listener(5584, "not-an-address");
+
+    assert_int_equal(socket_init(&rejected, &bad), invalid_argument);
+
+    /* If the failed attempt had bound (or leaked a bound descriptor), this
+     * second listener on the same port could not come up. */
+    socket_t listener;
+    socket_config_t good = plain_listener(5584, "127.0.0.1");
+
+    assert_int_equal(socket_init(&listener, &good), ok);
+    assert_int_equal(socket_deinit(&listener), ok);
+}
+
+/* Documented contract: inet_pton only. A name could resolve to an address on
+ * an interface the caller never meant to expose, so it is refused rather than
+ * looked up. */
+static void socket_bind_address_rejects_names_and_ipv6(void** state)
+{
+    (void)state;
+    socket_t listener;
+
+    socket_config_t by_name = plain_listener(5585, "localhost");
+    assert_int_equal(socket_init(&listener, &by_name), invalid_argument);
+
+    socket_config_t ipv6 = plain_listener(5585, "::1");
+    assert_int_equal(socket_init(&listener, &ipv6), invalid_argument);
+
+    socket_config_t truncated = plain_listener(5585, "127.0.0");
+    assert_int_equal(socket_init(&listener, &truncated), invalid_argument);
+}
+
+static void socket_bind_address_is_ignored_for_a_client(void** state)
+{
+    (void)state;
+    socket_t client;
+
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable    = false;
+    cfg.local.address = "not-an-address"; /* meaningless for a client */
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_deinit(&client), ok);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -121,6 +215,12 @@ int test_socket()
       cmocka_unit_test(socket_get_io_want_on_null_returns_zero),
       cmocka_unit_test(socket_get_default_secure_server_config_has_expected_values),
       cmocka_unit_test(socket_get_default_secure_client_config_has_expected_values),
+      cmocka_unit_test(socket_bind_address_unset_binds_every_interface),
+      cmocka_unit_test(socket_bind_address_empty_binds_every_interface),
+      cmocka_unit_test(socket_bind_address_loopback_succeeds),
+      cmocka_unit_test(socket_bind_address_malformed_is_rejected_without_binding),
+      cmocka_unit_test(socket_bind_address_rejects_names_and_ipv6),
+      cmocka_unit_test(socket_bind_address_is_ignored_for_a_client),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);

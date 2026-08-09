@@ -519,6 +519,28 @@ result_t socket_init(socket_t *s, socket_config_t *config)
     s->remote      = config->remote;
     s->tls.enabled = config->tls.enable;
 
+    /* Resolve the bind address up front, before anything is allocated. A
+     * caller does not deinitialize an object whose initialization failed, so
+     * rejecting a malformed address further down -- after the TLS context and
+     * the listening socket exist -- would leak both. Nothing is owned yet at
+     * this point, so this failure is free. */
+    struct in_addr bind_address;
+    bind_address.s_addr = INADDR_ANY;
+
+    if (config->role == socket_role_server &&
+        config->local.address != NULL &&
+        config->local.address[0] != '\0')
+    {
+        /* inet_pton, not a name lookup: this is a listener, and resolving a
+         * name here could hand back an address on an interface the caller did
+         * not mean to expose. Numeric IPv4 literals only. */
+        if (inet_pton(AF_INET, config->local.address, &bind_address) != 1)
+        {
+            log_error("bind address '%s' is not an IPv4 address", config->local.address);
+            return invalid_argument;
+        }
+    }
+
 #if SOCKET_TLS_ENABLED
     if (s->tls.enabled)
     {
@@ -598,7 +620,7 @@ result_t socket_init(socket_t *s, socket_config_t *config)
 
         memset(&s->sa_serv, '\0', sizeof(s->sa_serv));
         s->sa_serv.sin_family = AF_INET;
-        s->sa_serv.sin_addr.s_addr = INADDR_ANY;
+        s->sa_serv.sin_addr = bind_address; /* INADDR_ANY unless one was given */
         s->sa_serv.sin_port = htons(config->local.port); /* Server Port number */
 
         socket_result = bind(s->listen_sd, (struct sockaddr *)&s->sa_serv, sizeof(s->sa_serv));
