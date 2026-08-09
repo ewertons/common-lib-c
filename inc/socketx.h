@@ -67,11 +67,22 @@ typedef enum socket_role
 typedef struct local_host_config
 {
     int port;
-    /* Address to bind the listener to, e.g. "127.0.0.1". NULL or empty binds
-     * every interface, which is the historical behaviour and stays the
-     * default. Worth being able to restrict: a service that is only meant to
-     * be reached through a tunnel has no business being listed by a port scan
-     * of the machine. */
+    /* Address to bind the listener to. NULL or empty binds every interface,
+     * which is the historical behaviour and stays the default.
+     *
+     * A numeric IPv4 literal only, e.g. "127.0.0.1" -- parsed with inet_pton,
+     * so host names ("localhost") and IPv6 literals ("::1") are NOT accepted
+     * and make socket_init return invalid_argument. Deliberate: this selects
+     * an interface to expose, and a name lookup could return an address the
+     * caller did not mean to bind.
+     *
+     * A malformed value is rejected rather than falling back to every
+     * interface, because the reason to set this at all is to not be reachable.
+     * Ignored for socket_role_client.
+     *
+     * Worth being able to restrict: a service that is only meant to be reached
+     * through a tunnel has no business being listed by a port scan of the
+     * machine. */
     const char* address;
 } local_host_config_t;
 
