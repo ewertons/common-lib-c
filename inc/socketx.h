@@ -99,6 +99,20 @@ typedef struct socket_config
     local_host_config_t local;
     remote_host_config_t remote;
 
+    /* Milliseconds a blocking receive may wait before giving up. 0 waits
+     * forever, which is the historical behaviour and stays the default.
+     *
+     * Worth setting on a client: an address can complete the TCP handshake
+     * and then say nothing at all -- a black-holed route does exactly that
+     * -- and without a timeout the TLS handshake owns the calling thread
+     * for the life of the process. With one, that address fails and
+     * socket_connect moves on to the next the name resolved to.
+     *
+     * Applied to the descriptor before the TLS handshake, so it bounds the
+     * handshake as well as the reads that follow. It does not bound
+     * connect() itself, which the kernel already limits. */
+    uint32_t io_timeout_ms;
+
     /* When true, sets SO_REUSEPORT so multiple processes can bind to
      * the same port.  Defaults to false in plain/secure helpers. */
     bool reuse_port;
@@ -117,6 +131,9 @@ typedef struct socket
     socket_role_t role;
     local_host_config_t local;
     remote_host_config_t remote;
+
+    /* Copied from the config; see io_timeout_ms there. */
+    uint32_t io_timeout_ms;
 
     int listen_sd;
     int sd;

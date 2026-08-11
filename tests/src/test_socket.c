@@ -8,6 +8,10 @@
 #include "socketx.h"
 
 #include <unistd.h> 
+#include <string.h>
+#include <time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
 #define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
@@ -206,6 +210,154 @@ static void socket_bind_address_is_ignored_for_a_client(void** state)
     assert_int_equal(socket_deinit(&client), ok);
 }
 
+/* --- io_timeout_ms ------------------------------------------------------ *
+ *
+ * The case these exist for: an address that completes the TCP handshake and
+ * then never speaks. A black-holed route does exactly that, and without a
+ * timeout the TLS handshake keeps the calling thread for the life of the
+ * process -- which is a dashboard whose sign-in never returns, not a slow
+ * request. Plain TCP throughout, so no TLS fixtures are needed.
+ */
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
+/* A listener that accepts and then says nothing, which is what makes the
+ * client's handshake wait. Nothing is ever read from it. */
+static int silent_listener(int port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert_true(fd >= 0);
+
+    int reuse = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in addr;
+    (void)memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons((uint16_t)port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    assert_int_equal(bind(fd, (struct sockaddr*)&addr, sizeof(addr)), 0);
+    assert_int_equal(listen(fd, 4), 0);
+    return fd;
+}
+
+static socket_config_t plain_client(int port, uint32_t io_timeout_ms)
+{
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("127.0.0.1");
+    cfg.remote.port     = port;
+    cfg.io_timeout_ms   = io_timeout_ms;
+    return cfg;
+}
+
+/* The timeout has to reach the descriptor, because that is the only thing
+ * that bounds a handshake. Read it back rather than trusting the call. */
+static void socket_io_timeout_reaches_the_descriptor(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5591);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5591, 1500);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    struct timeval tv;
+    socklen_t len = sizeof(tv);
+    assert_int_equal(getsockopt(client.sd, SOL_SOCKET, SO_RCVTIMEO, &tv, &len), 0);
+    assert_int_equal((int)tv.tv_sec, 1);
+    assert_int_equal((int)tv.tv_usec, 500000);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* Zero has to keep waiting forever, or setting nothing would silently
+ * change how every existing caller behaves. */
+static void socket_without_an_io_timeout_stays_blocking(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5592);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5592, 0);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    struct timeval tv;
+    socklen_t len = sizeof(tv);
+    assert_int_equal(getsockopt(client.sd, SOL_SOCKET, SO_RCVTIMEO, &tv, &len), 0);
+    assert_int_equal((int)tv.tv_sec, 0);
+    assert_int_equal((int)tv.tv_usec, 0);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* The one that matters. Against a peer that accepts and then says nothing,
+ * a read must come back rather than park the thread. Before the timeout
+ * existed this call never returned. */
+static void socket_read_gives_up_on_a_silent_peer(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5593);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5593, 400);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    uint8_t  raw[64];
+    span_t   got;
+    uint64_t started = monotonic_ms();
+    result_t result  = socket_read(&client, span_from_memory(raw), &got, NULL);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    /* try_again is the honest answer for a receive timeout: nothing arrived
+     * this time round. What matters is that it answered at all. */
+    assert_int_equal(result, try_again);
+    assert_true(elapsed >= 300);
+    assert_true(elapsed < 5000);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* A name that resolves to several addresses must not be sunk by the first
+ * one being unusable. 127.0.0.1 has nothing listening on this port, so the
+ * connect fails and the loop has to carry on to the address that works --
+ * the same path a black-holed address takes after its handshake fails. */
+static void socket_connect_tries_every_resolved_address(void** state)
+{
+    (void)state;
+    /* localhost resolves to ::1 and 127.0.0.1 on most systems; binding only
+     * IPv4 means whichever is offered first may be the one that fails. */
+    int listener = silent_listener(5594);
+
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("localhost");
+    cfg.remote.port     = 5594;
+    cfg.io_timeout_ms   = 400;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -221,6 +373,10 @@ int test_socket()
       cmocka_unit_test(socket_bind_address_malformed_is_rejected_without_binding),
       cmocka_unit_test(socket_bind_address_rejects_names_and_ipv6),
       cmocka_unit_test(socket_bind_address_is_ignored_for_a_client),
+      cmocka_unit_test(socket_io_timeout_reaches_the_descriptor),
+      cmocka_unit_test(socket_without_an_io_timeout_stays_blocking),
+      cmocka_unit_test(socket_read_gives_up_on_a_silent_peer),
+      cmocka_unit_test(socket_connect_tries_every_resolved_address),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);
