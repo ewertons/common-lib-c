@@ -12,6 +12,7 @@
 #include <time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 #define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
 #define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
@@ -358,6 +359,85 @@ static void socket_connect_tries_every_resolved_address(void** state)
     close(listener);
 }
 
+/* The connect is attempted non-blocking so it can be given a deadline, but
+ * everything downstream is written against a blocking descriptor. Leaving
+ * O_NONBLOCK set would turn every later read into a spurious try_again, so
+ * this is the assertion that keeps the deadline from breaking the rest. */
+static void socket_connect_leaves_the_descriptor_blocking(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5595);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5595, 2000);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    int flags = fcntl(client.sd, F_GETFL, 0);
+    assert_true(flags != -1);
+    assert_int_equal(flags & O_NONBLOCK, 0);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* A refused connection reports ready on POLLOUT just as a successful one
+ * does, so the deadline path has to check SO_ERROR rather than treat
+ * "finished" as "connected". Nothing listens on this port. */
+static void socket_connect_reports_a_refused_port_promptly(void** state)
+{
+    (void)state;
+    socket_t client;
+    socket_config_t cfg = plain_client(5596, 5000);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    uint64_t started = monotonic_ms();
+    assert_int_not_equal(socket_connect(&client), ok);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    /* Refused is immediate; the point is that it is not reported as a
+     * success and does not sit out the budget. */
+    assert_true(elapsed < 2000);
+
+    (void)socket_deinit(&client);
+}
+
+/* The case the deadline exists for: an address that swallows SYNs. Without
+ * it the kernel alone decides, which is tcp_syn_retries -- measured at
+ * 135 s on the machine this was written for, and per address.
+ *
+ * 192.0.2.1 is TEST-NET-1: routable, assigned to nobody, and normally
+ * dropped rather than refused. Some networks answer with an unreachable
+ * instead, which is a legitimate fast failure, so the timing is only
+ * asserted when the address actually behaved like a hole. */
+static void socket_connect_gives_up_on_an_address_that_swallows_syns(void** state)
+{
+    (void)state;
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("192.0.2.1");
+    cfg.remote.port     = 443;
+    cfg.io_timeout_ms   = 700;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    uint64_t started = monotonic_ms();
+    assert_int_not_equal(socket_connect(&client), ok);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    if (elapsed > 200)
+    {
+        /* It was dropped, so the deadline is what ended it. Well under the
+         * kernel's two minutes is the whole point. */
+        assert_true(elapsed < 10000);
+    }
+
+    (void)socket_deinit(&client);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -377,6 +457,9 @@ int test_socket()
       cmocka_unit_test(socket_without_an_io_timeout_stays_blocking),
       cmocka_unit_test(socket_read_gives_up_on_a_silent_peer),
       cmocka_unit_test(socket_connect_tries_every_resolved_address),
+      cmocka_unit_test(socket_connect_leaves_the_descriptor_blocking),
+      cmocka_unit_test(socket_connect_reports_a_refused_port_promptly),
+      cmocka_unit_test(socket_connect_gives_up_on_an_address_that_swallows_syns),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);

@@ -15,6 +15,7 @@
 #endif
 
 #include <signal.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -836,6 +837,115 @@ static void apply_io_timeout(int fd, uint32_t io_timeout_ms)
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
+static result_t set_blocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+    {
+        return error;
+    }
+    if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1)
+    {
+        return error;
+    }
+    return ok;
+}
+
+/* connect() with a deadline.
+ *
+ * A blocking connect is bounded only by the kernel's SYN retry schedule.
+ * tcp_syn_retries defaults to 6, which is a little over two minutes --
+ * measured at 135 s -- and it is per address, so a name that resolves to
+ * two dead ones costs twice that before the third is even tried. For a
+ * caller with a single worker thread that is minutes of not answering.
+ *
+ * Non-blocking for the attempt and blocking again afterwards: everything
+ * downstream -- the TLS handshake, socket_read, socket_write -- is written
+ * against a blocking descriptor, and leaving this one non-blocking would
+ * turn every later read into a spurious try_again.
+ *
+ * 0 keeps the kernel's own behaviour, so callers that set nothing are
+ * unaffected. */
+static result_t connect_with_deadline(int fd, const struct addrinfo* address,
+                                      uint32_t timeout_ms)
+{
+    if (timeout_ms == 0)
+    {
+        return connect(fd, address->ai_addr, address->ai_addrlen) == 0 ? ok : error;
+    }
+
+    if (socket_set_nonblocking(fd) != ok)
+    {
+        return error;
+    }
+
+    result_t result = error;
+
+    if (connect(fd, address->ai_addr, address->ai_addrlen) == 0)
+    {
+        result = ok;
+    }
+    else if (errno == EINPROGRESS)
+    {
+        const uint64_t deadline = monotonic_ms() + (uint64_t)timeout_ms;
+
+        for (;;)
+        {
+            uint64_t now = monotonic_ms();
+            if (now >= deadline)
+            {
+                log_error("connect timed out after %u ms", timeout_ms);
+                break;
+            }
+
+            struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
+            int ready = poll(&pfd, 1, (int)(deadline - now));
+
+            if (ready > 0)
+            {
+                /* POLLOUT only says the attempt finished, not that it
+                 * succeeded -- a refused connection reports ready too. */
+                int       error_code = 0;
+                socklen_t length     = (socklen_t)sizeof(error_code);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error_code, &length) == 0 &&
+                    error_code == 0)
+                {
+                    result = ok;
+                }
+                break;
+            }
+            if (ready == 0)
+            {
+                log_error("connect timed out after %u ms", timeout_ms);
+                break;
+            }
+            if (errno != EINTR)
+            {
+                break;
+            }
+            /* Interrupted: wait out whatever is left of the budget rather
+             * than restarting it. */
+        }
+    }
+
+    /* Whatever happened, the descriptor must go back to blocking before it
+     * is handed on -- including on the failure paths, where the caller may
+     * still close it. */
+    if (set_blocking(fd) != ok)
+    {
+        result = error;
+    }
+
+    return result;
+}
+
 #if SOCKET_TLS_ENABLED
 /* Drives the client handshake on an already-connected descriptor.
  *
@@ -981,7 +1091,7 @@ result_t socket_connect(socket_t *client)
                 continue;
             }
 
-            if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
+            if (connect_with_deadline(sockfd, p, client->io_timeout_ms) != ok)
             {
                 close(sockfd);
                 continue;

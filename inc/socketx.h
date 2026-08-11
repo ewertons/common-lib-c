@@ -99,18 +99,20 @@ typedef struct socket_config
     local_host_config_t local;
     remote_host_config_t remote;
 
-    /* Milliseconds a blocking receive may wait before giving up. 0 waits
-     * forever, which is the historical behaviour and stays the default.
+    /* Milliseconds any single step of reaching a peer may stall before it
+     * is given up on: the connect, the TLS handshake, and each blocking
+     * receive. 0 waits as long as the kernel would, which is the historical
+     * behaviour and stays the default.
      *
-     * Worth setting on a client: an address can complete the TCP handshake
+     * Worth setting on a client. An address can complete the TCP handshake
      * and then say nothing at all -- a black-holed route does exactly that
-     * -- and without a timeout the TLS handshake owns the calling thread
-     * for the life of the process. With one, that address fails and
-     * socket_connect moves on to the next the name resolved to.
+     * -- and the handshake has no bound of its own, so the calling thread
+     * is gone for good. An address that drops SYNs instead is bounded only
+     * by tcp_syn_retries, a little over two minutes per address and
+     * cumulative across the addresses a name resolves to.
      *
-     * Applied to the descriptor before the TLS handshake, so it bounds the
-     * handshake as well as the reads that follow. It does not bound
-     * connect() itself, which the kernel already limits. */
+     * With it set, a bad address costs this much and socket_connect moves
+     * on to the next one the name gave. */
     uint32_t io_timeout_ms;
 
     /* When true, sets SO_REUSEPORT so multiple processes can bind to
