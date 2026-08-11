@@ -13,6 +13,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <poll.h>
 
 #define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
 #define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
@@ -337,7 +339,7 @@ static void socket_read_gives_up_on_a_silent_peer(void** state)
 /* A name that resolves to several addresses must not be sunk by the first
  * one being unusable. 127.0.0.1 has nothing listening on this port, so the
  * connect fails and the loop has to carry on to the address that works --
- * the same path a black-holed address takes after its handshake fails. */
+ * this covers the retry after a TCP failure, which predates this change. */
 static void socket_connect_tries_every_resolved_address(void** state)
 {
     (void)state;
@@ -357,6 +359,125 @@ static void socket_connect_tries_every_resolved_address(void** state)
 
     assert_int_equal(socket_deinit(&client), ok);
     close(listener);
+}
+
+/* Binds a listener on exactly the address getaddrinfo handed back, so the
+ * test controls which candidate is which rather than hoping for an order.
+ * Accepts and never speaks, which is what stalls a TLS handshake. */
+static int silent_listener_on(const struct sockaddr* address, socklen_t length,
+                              int family, uint16_t port)
+{
+    int fd = socket(family, SOCK_STREAM, 0);
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    int reuse = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    /* A copy, so the port can be set without disturbing the resolver's list. */
+    struct sockaddr_storage bind_address;
+    (void)memcpy(&bind_address, address, length);
+    if (family == AF_INET)
+    {
+        ((struct sockaddr_in*)&bind_address)->sin_port = htons(port);
+    }
+    else
+    {
+        ((struct sockaddr_in6*)&bind_address)->sin6_port = htons(port);
+    }
+
+    if (bind(fd, (struct sockaddr*)&bind_address, length) != 0 || listen(fd, 4) != 0)
+    {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static bool has_pending_connection(int listener)
+{
+    struct pollfd pfd = { .fd = listener, .events = POLLIN, .revents = 0 };
+    return poll(&pfd, 1, 0) > 0;
+}
+
+/* The retry this change actually adds: moving on after a candidate's TLS
+ * handshake fails, rather than after its TCP connect fails.
+ *
+ * Both listeners accept and then say nothing, so every candidate stalls in
+ * the handshake and the connect as a whole fails. That is the point -- what
+ * is being asserted is that the second address was *tried*, which only
+ * happens if a TLS failure no longer ends the search. Deterministic because
+ * the listeners are bound onto the resolver's own list, whatever order it
+ * returns, and fixture-free because no handshake ever completes.
+ */
+static void socket_connect_tries_the_next_address_after_a_tls_failure(void** state)
+{
+    (void)state;
+
+    struct addrinfo hints;
+    (void)memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* resolved = NULL;
+    if (getaddrinfo("localhost", "0", &hints, &resolved) != 0 || resolved == NULL)
+    {
+        skip();  /* no resolver here; nothing to say about ordering */
+    }
+
+    struct addrinfo* first  = resolved;
+    struct addrinfo* second = resolved->ai_next;
+    if (second == NULL)
+    {
+        freeaddrinfo(resolved);
+        skip();  /* localhost is single-homed on this machine */
+    }
+
+    /* One port, both addresses. Taken from the first bind so the test never
+     * collides with whatever else is running. */
+    int first_fd = silent_listener_on(first->ai_addr, first->ai_addrlen,
+                                      first->ai_family, 0);
+    assert_true(first_fd >= 0);
+
+    struct sockaddr_storage bound;
+    socklen_t bound_length = sizeof(bound);
+    assert_int_equal(getsockname(first_fd, (struct sockaddr*)&bound, &bound_length), 0);
+    uint16_t port = (first->ai_family == AF_INET)
+                        ? ntohs(((struct sockaddr_in*)&bound)->sin_port)
+                        : ntohs(((struct sockaddr_in6*)&bound)->sin6_port);
+
+    int second_fd = silent_listener_on(second->ai_addr, second->ai_addrlen,
+                                       second->ai_family, port);
+    freeaddrinfo(resolved);
+    if (second_fd < 0)
+    {
+        close(first_fd);
+        skip();  /* the port was not free on the second address */
+    }
+
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = true;
+    cfg.remote.hostname = span_from_str_literal("localhost");
+    cfg.remote.port     = port;
+    cfg.io_timeout_ms   = 300;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    /* Every candidate stalls, so the whole connect fails. */
+    assert_int_not_equal(socket_connect(&client), ok);
+
+    /* The assertion that matters: both were attempted. Before the handshake
+     * moved inside the loop, the first failure ended it and the second
+     * listener never saw a connection. */
+    assert_true(has_pending_connection(first_fd));
+    assert_true(has_pending_connection(second_fd));
+
+    (void)socket_deinit(&client);
+    close(first_fd);
+    close(second_fd);
 }
 
 /* The connect is attempted non-blocking so it can be given a deadline, but
@@ -457,6 +578,7 @@ int test_socket()
       cmocka_unit_test(socket_without_an_io_timeout_stays_blocking),
       cmocka_unit_test(socket_read_gives_up_on_a_silent_peer),
       cmocka_unit_test(socket_connect_tries_every_resolved_address),
+      cmocka_unit_test(socket_connect_tries_the_next_address_after_a_tls_failure),
       cmocka_unit_test(socket_connect_leaves_the_descriptor_blocking),
       cmocka_unit_test(socket_connect_reports_a_refused_port_promptly),
       cmocka_unit_test(socket_connect_gives_up_on_an_address_that_swallows_syns),
