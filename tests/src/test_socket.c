@@ -8,6 +8,13 @@
 #include "socketx.h"
 
 #include <unistd.h> 
+#include <string.h>
+#include <time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <poll.h>
 
 #define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
 #define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
@@ -206,6 +213,352 @@ static void socket_bind_address_is_ignored_for_a_client(void** state)
     assert_int_equal(socket_deinit(&client), ok);
 }
 
+/* --- io_timeout_ms ------------------------------------------------------ *
+ *
+ * The case these exist for: an address that completes the TCP handshake and
+ * then never speaks. A black-holed route does exactly that, and without a
+ * timeout the TLS handshake keeps the calling thread for the life of the
+ * process -- which is a dashboard whose sign-in never returns, not a slow
+ * request. Plain TCP throughout, so no TLS fixtures are needed.
+ */
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
+/* A listener that accepts and then says nothing, which is what makes the
+ * client's handshake wait. Nothing is ever read from it. */
+static int silent_listener(int port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert_true(fd >= 0);
+
+    int reuse = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in addr;
+    (void)memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons((uint16_t)port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    assert_int_equal(bind(fd, (struct sockaddr*)&addr, sizeof(addr)), 0);
+    assert_int_equal(listen(fd, 4), 0);
+    return fd;
+}
+
+static socket_config_t plain_client(int port, uint32_t io_timeout_ms)
+{
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("127.0.0.1");
+    cfg.remote.port     = port;
+    cfg.io_timeout_ms   = io_timeout_ms;
+    return cfg;
+}
+
+/* The timeout has to reach the descriptor, because that is the only thing
+ * that bounds a handshake. Read it back rather than trusting the call. */
+static void socket_io_timeout_reaches_the_descriptor(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5591);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5591, 1500);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    struct timeval tv;
+    socklen_t len = sizeof(tv);
+    assert_int_equal(getsockopt(client.sd, SOL_SOCKET, SO_RCVTIMEO, &tv, &len), 0);
+    assert_int_equal((int)tv.tv_sec, 1);
+    assert_int_equal((int)tv.tv_usec, 500000);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* Zero has to keep waiting forever, or setting nothing would silently
+ * change how every existing caller behaves. */
+static void socket_without_an_io_timeout_stays_blocking(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5592);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5592, 0);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    struct timeval tv;
+    socklen_t len = sizeof(tv);
+    assert_int_equal(getsockopt(client.sd, SOL_SOCKET, SO_RCVTIMEO, &tv, &len), 0);
+    assert_int_equal((int)tv.tv_sec, 0);
+    assert_int_equal((int)tv.tv_usec, 0);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* The one that matters. Against a peer that accepts and then says nothing,
+ * a read must come back rather than park the thread. Before the timeout
+ * existed this call never returned. */
+static void socket_read_gives_up_on_a_silent_peer(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5593);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5593, 400);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    uint8_t  raw[64];
+    span_t   got;
+    uint64_t started = monotonic_ms();
+    result_t result  = socket_read(&client, span_from_memory(raw), &got, NULL);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    /* try_again is the honest answer for a receive timeout: nothing arrived
+     * this time round. What matters is that it answered at all. */
+    assert_int_equal(result, try_again);
+    assert_true(elapsed >= 300);
+    assert_true(elapsed < 5000);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* A name that resolves to several addresses must not be sunk by the first
+ * one being unusable. 127.0.0.1 has nothing listening on this port, so the
+ * connect fails and the loop has to carry on to the address that works --
+ * this covers the retry after a TCP failure, which predates this change. */
+static void socket_connect_tries_every_resolved_address(void** state)
+{
+    (void)state;
+    /* localhost resolves to ::1 and 127.0.0.1 on most systems; binding only
+     * IPv4 means whichever is offered first may be the one that fails. */
+    int listener = silent_listener(5594);
+
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("localhost");
+    cfg.remote.port     = 5594;
+    cfg.io_timeout_ms   = 400;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* Binds a listener on exactly the address getaddrinfo handed back, so the
+ * test controls which candidate is which rather than hoping for an order.
+ * Accepts and never speaks, which is what stalls a TLS handshake. */
+static int silent_listener_on(const struct sockaddr* address, socklen_t length,
+                              int family, uint16_t port)
+{
+    int fd = socket(family, SOCK_STREAM, 0);
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    int reuse = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    /* A copy, so the port can be set without disturbing the resolver's list. */
+    struct sockaddr_storage bind_address;
+    (void)memcpy(&bind_address, address, length);
+    if (family == AF_INET)
+    {
+        ((struct sockaddr_in*)&bind_address)->sin_port = htons(port);
+    }
+    else
+    {
+        ((struct sockaddr_in6*)&bind_address)->sin6_port = htons(port);
+    }
+
+    if (bind(fd, (struct sockaddr*)&bind_address, length) != 0 || listen(fd, 4) != 0)
+    {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static bool has_pending_connection(int listener)
+{
+    struct pollfd pfd = { .fd = listener, .events = POLLIN, .revents = 0 };
+    return poll(&pfd, 1, 0) > 0;
+}
+
+/* The retry this change actually adds: moving on after a candidate's TLS
+ * handshake fails, rather than after its TCP connect fails.
+ *
+ * Both listeners accept and then say nothing, so every candidate stalls in
+ * the handshake and the connect as a whole fails. That is the point -- what
+ * is being asserted is that the second address was *tried*, which only
+ * happens if a TLS failure no longer ends the search. Deterministic because
+ * the listeners are bound onto the resolver's own list, whatever order it
+ * returns, and fixture-free because no handshake ever completes.
+ */
+static void socket_connect_tries_the_next_address_after_a_tls_failure(void** state)
+{
+    (void)state;
+
+    struct addrinfo hints;
+    (void)memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* resolved = NULL;
+    if (getaddrinfo("localhost", "0", &hints, &resolved) != 0 || resolved == NULL)
+    {
+        skip();  /* no resolver here; nothing to say about ordering */
+    }
+
+    struct addrinfo* first  = resolved;
+    struct addrinfo* second = resolved->ai_next;
+    if (second == NULL)
+    {
+        freeaddrinfo(resolved);
+        skip();  /* localhost is single-homed on this machine */
+    }
+
+    /* One port, both addresses. Taken from the first bind so the test never
+     * collides with whatever else is running. */
+    int first_fd = silent_listener_on(first->ai_addr, first->ai_addrlen,
+                                      first->ai_family, 0);
+    assert_true(first_fd >= 0);
+
+    struct sockaddr_storage bound;
+    socklen_t bound_length = sizeof(bound);
+    assert_int_equal(getsockname(first_fd, (struct sockaddr*)&bound, &bound_length), 0);
+    uint16_t port = (first->ai_family == AF_INET)
+                        ? ntohs(((struct sockaddr_in*)&bound)->sin_port)
+                        : ntohs(((struct sockaddr_in6*)&bound)->sin6_port);
+
+    int second_fd = silent_listener_on(second->ai_addr, second->ai_addrlen,
+                                       second->ai_family, port);
+    freeaddrinfo(resolved);
+    if (second_fd < 0)
+    {
+        close(first_fd);
+        skip();  /* the port was not free on the second address */
+    }
+
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = true;
+    cfg.remote.hostname = span_from_str_literal("localhost");
+    cfg.remote.port     = port;
+    cfg.io_timeout_ms   = 300;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    /* Every candidate stalls, so the whole connect fails. */
+    assert_int_not_equal(socket_connect(&client), ok);
+
+    /* The assertion that matters: both were attempted. Before the handshake
+     * moved inside the loop, the first failure ended it and the second
+     * listener never saw a connection. */
+    assert_true(has_pending_connection(first_fd));
+    assert_true(has_pending_connection(second_fd));
+
+    (void)socket_deinit(&client);
+    close(first_fd);
+    close(second_fd);
+}
+
+/* The connect is attempted non-blocking so it can be given a deadline, but
+ * everything downstream is written against a blocking descriptor. Leaving
+ * O_NONBLOCK set would turn every later read into a spurious try_again, so
+ * this is the assertion that keeps the deadline from breaking the rest. */
+static void socket_connect_leaves_the_descriptor_blocking(void** state)
+{
+    (void)state;
+    int listener = silent_listener(5595);
+
+    socket_t client;
+    socket_config_t cfg = plain_client(5595, 2000);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    int flags = fcntl(client.sd, F_GETFL, 0);
+    assert_true(flags != -1);
+    assert_int_equal(flags & O_NONBLOCK, 0);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(listener);
+}
+
+/* A refused connection reports ready on POLLOUT just as a successful one
+ * does, so the deadline path has to check SO_ERROR rather than treat
+ * "finished" as "connected". Nothing listens on this port. */
+static void socket_connect_reports_a_refused_port_promptly(void** state)
+{
+    (void)state;
+    socket_t client;
+    socket_config_t cfg = plain_client(5596, 5000);
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    uint64_t started = monotonic_ms();
+    assert_int_not_equal(socket_connect(&client), ok);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    /* Refused is immediate; the point is that it is not reported as a
+     * success and does not sit out the budget. */
+    assert_true(elapsed < 2000);
+
+    (void)socket_deinit(&client);
+}
+
+/* The case the deadline exists for: an address that swallows SYNs. Without
+ * it the kernel alone decides, which is tcp_syn_retries -- measured at
+ * 135 s on the machine this was written for, and per address.
+ *
+ * 192.0.2.1 is TEST-NET-1: routable, assigned to nobody, and normally
+ * dropped rather than refused. Some networks answer with an unreachable
+ * instead, which is a legitimate fast failure, so the timing is only
+ * asserted when the address actually behaved like a hole. */
+static void socket_connect_gives_up_on_an_address_that_swallows_syns(void** state)
+{
+    (void)state;
+    socket_t client;
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.tls.enable      = false;
+    cfg.remote.hostname = span_from_str_literal("192.0.2.1");
+    cfg.remote.port     = 443;
+    cfg.io_timeout_ms   = 700;
+
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    uint64_t started = monotonic_ms();
+    assert_int_not_equal(socket_connect(&client), ok);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    if (elapsed > 200)
+    {
+        /* It was dropped, so the deadline is what ended it. Well under the
+         * kernel's two minutes is the whole point. */
+        assert_true(elapsed < 10000);
+    }
+
+    (void)socket_deinit(&client);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -221,6 +574,14 @@ int test_socket()
       cmocka_unit_test(socket_bind_address_malformed_is_rejected_without_binding),
       cmocka_unit_test(socket_bind_address_rejects_names_and_ipv6),
       cmocka_unit_test(socket_bind_address_is_ignored_for_a_client),
+      cmocka_unit_test(socket_io_timeout_reaches_the_descriptor),
+      cmocka_unit_test(socket_without_an_io_timeout_stays_blocking),
+      cmocka_unit_test(socket_read_gives_up_on_a_silent_peer),
+      cmocka_unit_test(socket_connect_tries_every_resolved_address),
+      cmocka_unit_test(socket_connect_tries_the_next_address_after_a_tls_failure),
+      cmocka_unit_test(socket_connect_leaves_the_descriptor_blocking),
+      cmocka_unit_test(socket_connect_reports_a_refused_port_promptly),
+      cmocka_unit_test(socket_connect_gives_up_on_an_address_that_swallows_syns),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);

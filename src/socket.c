@@ -15,6 +15,7 @@
 #endif
 
 #include <signal.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -518,6 +519,7 @@ result_t socket_init(socket_t *s, socket_config_t *config)
     s->local       = config->local;
     s->remote      = config->remote;
     s->tls.enabled = config->tls.enable;
+    s->io_timeout_ms = config->io_timeout_ms;
 
     /* Resolve the bind address up front, before anything is allocated. A
      * caller does not deinitialize an object whose initialization failed, so
@@ -816,6 +818,280 @@ task_t *socket_accept_async(socket_t *server, socket_t *client)
 }
 
 // https://cpp.hotexamples.com/examples/-/-/SSL_set_fd/cpp-ssl_set_fd-function-examples.html
+/* Sets or clears one of the socket's timeouts. 0 clears it, restoring the
+ * indefinite wait.
+ *
+ * Reports failure rather than swallowing it: a rejected setsockopt would
+ * leave the descriptor waiting forever, which is the exact condition the
+ * option exists to prevent, and carrying on into a handshake as though the
+ * deadline were installed hides that completely. */
+static result_t set_socket_timeout(int fd, int option, uint32_t timeout_ms)
+{
+    struct timeval tv;
+    tv.tv_sec  = (time_t)(timeout_ms / 1000u);
+    tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
+
+    if (setsockopt(fd, SOL_SOCKET, option, &tv, sizeof(tv)) != 0)
+    {
+        log_error("setsockopt(%s) (%s)",
+                  option == SO_RCVTIMEO ? "SO_RCVTIMEO" : "SO_SNDTIMEO",
+                  strerror(errno));
+        return error;
+    }
+    return ok;
+}
+
+/* A blocking descriptor with no timeout waits for a peer forever, which is
+ * not a theoretical worry: an address whose route is black-holed completes
+ * the TCP handshake and then never sends a byte.
+ *
+ * Receive only here. Application writes stay blocking on purpose -- a send
+ * deadline would abandon a request half-written, and a half-sent request is
+ * worse than a slow one. The handshake gets a send deadline of its own,
+ * which client_tls_handshake sets and clears around itself. */
+static result_t apply_io_timeout(int fd, uint32_t io_timeout_ms)
+{
+    if (io_timeout_ms == 0)
+    {
+        return ok;
+    }
+    return set_socket_timeout(fd, SO_RCVTIMEO, io_timeout_ms);
+}
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
+static result_t set_blocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+    {
+        return error;
+    }
+    if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1)
+    {
+        return error;
+    }
+    return ok;
+}
+
+/* connect() with a deadline.
+ *
+ * A blocking connect is bounded only by the kernel's SYN retry schedule.
+ * tcp_syn_retries defaults to 6, which is a little over two minutes --
+ * measured at 135 s -- and it is per address, so a name that resolves to
+ * two dead ones costs twice that before the third is even tried. For a
+ * caller with a single worker thread that is minutes of not answering.
+ *
+ * Non-blocking for the attempt and blocking again afterwards: everything
+ * downstream -- the TLS handshake, socket_read, socket_write -- is written
+ * against a blocking descriptor, and leaving this one non-blocking would
+ * turn every later read into a spurious try_again.
+ *
+ * 0 keeps the kernel's own behaviour, so callers that set nothing are
+ * unaffected. */
+static result_t connect_with_deadline(int fd, const struct addrinfo* address,
+                                      uint32_t timeout_ms)
+{
+    if (timeout_ms == 0)
+    {
+        return connect(fd, address->ai_addr, address->ai_addrlen) == 0 ? ok : error;
+    }
+
+    if (socket_set_nonblocking(fd) != ok)
+    {
+        return error;
+    }
+
+    result_t result = error;
+
+    if (connect(fd, address->ai_addr, address->ai_addrlen) == 0)
+    {
+        result = ok;
+    }
+    else if (errno == EINPROGRESS)
+    {
+        const uint64_t deadline = monotonic_ms() + (uint64_t)timeout_ms;
+
+        for (;;)
+        {
+            uint64_t now = monotonic_ms();
+            if (now >= deadline)
+            {
+                log_error("connect timed out after %u ms", timeout_ms);
+                break;
+            }
+
+            struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
+            int ready = poll(&pfd, 1, (int)(deadline - now));
+
+            if (ready > 0)
+            {
+                /* POLLOUT only says the attempt finished, not that it
+                 * succeeded -- a refused connection reports ready too. */
+                int       error_code = 0;
+                socklen_t length     = (socklen_t)sizeof(error_code);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error_code, &length) == 0 &&
+                    error_code == 0)
+                {
+                    result = ok;
+                }
+                break;
+            }
+            if (ready == 0)
+            {
+                log_error("connect timed out after %u ms", timeout_ms);
+                break;
+            }
+            if (errno != EINTR)
+            {
+                break;
+            }
+            /* Interrupted: wait out whatever is left of the budget rather
+             * than restarting it. */
+        }
+    }
+
+    /* Whatever happened, the descriptor must go back to blocking before it
+     * is handed on -- including on the failure paths, where the caller may
+     * still close it. */
+    if (set_blocking(fd) != ok)
+    {
+        result = error;
+    }
+
+    return result;
+}
+
+#if SOCKET_TLS_ENABLED
+/* Drives the client handshake on an already-connected descriptor.
+ *
+ * On failure it leaves the socket as it found it -- session freed,
+ * descriptor closed, sd back to -1 -- so the caller can simply try the
+ * next address. */
+static result_t client_tls_handshake(socket_t* client)
+{
+    client->tls.backend->ssl = SSL_new(client->tls.backend->ctx);
+    if (client->tls.backend->ssl == NULL)
+    {
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+
+    SSL_set_verify(client->tls.backend->ssl, SSL_VERIFY_PEER, NULL);
+
+    /* Set SNI (Server Name Indication) so the server knows which
+     * certificate to present.  Required by most CDN-backed APIs. */
+    if (!span_is_empty(client->remote.hostname))
+    {
+        char sni_host[256];
+        uint32_t hlen = span_get_size(client->remote.hostname);
+        if (hlen >= sizeof(sni_host)) hlen = sizeof(sni_host) - 1;
+        memcpy(sni_host, span_get_ptr(client->remote.hostname), hlen);
+        sni_host[hlen] = '\0';
+        SSL_set_tlsext_host_name(client->tls.backend->ssl, sni_host);
+    }
+
+    /* Bind hostname verification to the configured remote.hostname
+     * so the server cert's SAN/CN must match the name we asked to
+     * connect to. Without this, the chain is verified but any cert
+     * issued by a trusted CA would be accepted regardless of
+     * subject. */
+    if (!span_is_empty(client->remote.hostname))
+    {
+        X509_VERIFY_PARAM* vp = SSL_get0_param(client->tls.backend->ssl);
+        X509_VERIFY_PARAM_set_hostflags(vp,
+            X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+        if (X509_VERIFY_PARAM_set1_host(vp,
+                (const char*)span_get_ptr(client->remote.hostname),
+                span_get_size(client->remote.hostname)) != 1)
+        {
+            log_error("X509_VERIFY_PARAM_set1_host failed");
+        }
+    }
+
+    if (SSL_set_fd(client->tls.backend->ssl, client->sd) != 1)
+    {
+        socket_error(client->tls.backend->ssl, 0);
+        SSL_free(client->tls.backend->ssl);
+        client->tls.backend->ssl = NULL;
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+
+    /* A send deadline, for the handshake only.
+     *
+     * The receive timeout covers a peer that stops talking, but not one
+     * that stops reading: with the window closed, a handshake write blocks
+     * just as indefinitely. Application writes deliberately do not get
+     * this -- abandoning a request half-written is worse than a slow one --
+     * so it is cleared again the moment the handshake is done. */
+    if (client->io_timeout_ms != 0 &&
+        set_socket_timeout(client->sd, SO_SNDTIMEO, client->io_timeout_ms) != ok)
+    {
+        SSL_free(client->tls.backend->ssl);
+        client->tls.backend->ssl = NULL;
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+
+    ERR_clear_error();
+    int err = SSL_connect(client->tls.backend->ssl);
+
+    if (err != SSL_DO_HANDSHAKE_SUCCESS)
+    {
+        int ssl_err = SSL_get_error(client->tls.backend->ssl, err);
+
+        if (ssl_err == SSL_ERROR_SSL)
+        {
+            log_error("SSL_connect: %s", ERR_error_string(ERR_get_error(), NULL));
+        }
+        else if ((ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) &&
+                 client->io_timeout_ms != 0)
+        {
+            /* A blocking descriptor reports a timeout as EAGAIN, which
+             * OpenSSL relays as "retry". Naming it plainly matters:
+             * "handshake failed: 2" reads like a protocol fault, and this
+             * is a peer that accepted the connection and then stopped
+             * talking, or stopped reading. */
+            log_error("SSL handshake timed out after %u ms", client->io_timeout_ms);
+        }
+        else
+        {
+            log_error("SSL handshake failed: %d", ssl_err);
+        }
+
+        SSL_free(client->tls.backend->ssl);
+        client->tls.backend->ssl = NULL;
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+
+    /* Back to an unbounded write for the application's own traffic. */
+    if (client->io_timeout_ms != 0 &&
+        set_socket_timeout(client->sd, SO_SNDTIMEO, 0) != ok)
+    {
+        SSL_free(client->tls.backend->ssl);
+        client->tls.backend->ssl = NULL;
+        close(client->sd);
+        client->sd = -1;
+        return error;
+    }
+
+    log_info("SSL_get_verify_result=%ld", SSL_get_verify_result(client->tls.backend->ssl));
+    check_peer_certificates(client->tls.backend->ssl, "server");
+    return ok;
+}
+#endif /* SOCKET_TLS_ENABLED */
+
 result_t socket_connect(socket_t *client)
 {
     result_t result;
@@ -826,9 +1102,7 @@ result_t socket_connect(socket_t *client)
     }
     else
     {
-        /* ----------------------------------------------- */
-        /* TCP connection is ready. Do server side SSL. */
-        int err, rv;
+        int rv;
         int sockfd;
         struct addrinfo hints, *servinfo, *p;
 
@@ -850,6 +1124,14 @@ result_t socket_connect(socket_t *client)
             return error;
         }
 
+        /* A name commonly resolves to several addresses and they are not
+         * interchangeable in practice: one can be routed into a hole while
+         * the next answers immediately. So a candidate is only finished
+         * with once its TLS handshake has succeeded, not once its TCP
+         * connection has -- otherwise a single bad address takes the whole
+         * connection down while a working one sits untried. */
+        result = error;
+
         for (p = servinfo; p != NULL; p = p->ai_next)
         {
             if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
@@ -858,117 +1140,49 @@ result_t socket_connect(socket_t *client)
                 continue;
             }
 
-            if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
+            if (connect_with_deadline(sockfd, p, client->io_timeout_ms) != ok)
             {
                 close(sockfd);
                 continue;
             }
 
-            break;
-        }
-
-        freeaddrinfo(servinfo);
-
-        if (p == NULL)
-        {
-            log_error("client: failed to connect");
-            result = error;
-        }
-        else
-        {
+            /* Before the handshake, deliberately: that is the part with no
+             * bound of its own. A deadline that cannot be installed makes
+             * this candidate unusable -- carrying on would wait forever on
+             * exactly the address the deadline was meant to survive. */
+            if (apply_io_timeout(sockfd, client->io_timeout_ms) != ok)
+            {
+                close(sockfd);
+                continue;
+            }
             client->sd = sockfd;
 
             if (!client->tls.enabled)
             {
-                /* Plain TCP -- skip the entire SSL setup below. */
                 result = ok;
+                break;
             }
-            else
-            {
+
 #if SOCKET_TLS_ENABLED
-            /* socket_init already allocated the TLS backend and ctx for
-             * this client; we just attach a new SSL session to that ctx. */
-            client->tls.backend->ssl = SSL_new(client->tls.backend->ctx);
-
-            SSL_set_verify(client->tls.backend->ssl, SSL_VERIFY_PEER, NULL);
-
-            /* Set SNI (Server Name Indication) so the server knows which
-             * certificate to present.  Required by most CDN-backed APIs. */
-            if (!span_is_empty(client->remote.hostname))
+            if (client_tls_handshake(client) == ok)
             {
-                char sni_host[256];
-                uint32_t hlen = span_get_size(client->remote.hostname);
-                if (hlen >= sizeof(sni_host)) hlen = sizeof(sni_host) - 1;
-                memcpy(sni_host, span_get_ptr(client->remote.hostname), hlen);
-                sni_host[hlen] = '\0';
-                SSL_set_tlsext_host_name(client->tls.backend->ssl, sni_host);
+                result = ok;
+                break;
             }
-
-            /* Bind hostname verification to the configured remote.hostname
-             * so the server cert's SAN/CN must match the name we asked to
-             * connect to. Without this, the chain is verified but any cert
-             * issued by a trusted CA would be accepted regardless of
-             * subject. */
-            if (!span_is_empty(client->remote.hostname))
-            {
-                X509_VERIFY_PARAM* vp = SSL_get0_param(client->tls.backend->ssl);
-                X509_VERIFY_PARAM_set_hostflags(vp,
-                    X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-                if (X509_VERIFY_PARAM_set1_host(vp,
-                        (const char*)span_get_ptr(client->remote.hostname),
-                        span_get_size(client->remote.hostname)) != 1)
-                {
-                    log_error("X509_VERIFY_PARAM_set1_host failed");
-                }
-            }
-
-            err = SSL_set_fd(client->tls.backend->ssl, client->sd);
-
-            if (err != 1)
-            {
-                socket_error(client->tls.backend->ssl, err);
-                SSL_free(client->tls.backend->ssl);
-                client->tls.backend->ssl = NULL;
-                close(client->sd);
-                client->sd = -1;
-                result = error;
-            }
-            else
-            {
-                ERR_clear_error();
-                err = SSL_connect(client->tls.backend->ssl);
-
-                if (err != SSL_DO_HANDSHAKE_SUCCESS)
-                {
-                    int ssl_err = SSL_get_error(client->tls.backend->ssl, err);
-
-                    if (ssl_err == SSL_ERROR_SSL)
-                    {
-                        log_error("SSL_connect: %s", ERR_error_string(ERR_get_error(), NULL));
-                    }
-                    else
-                    {
-                        log_error("SSL handshake failed: %d", ssl_err);
-                    }
-
-                    SSL_free(client->tls.backend->ssl);
-                    client->tls.backend->ssl = NULL;
-                    close(client->sd);
-                    client->sd = -1;
-                    result = error;
-                }
-                else
-                {
-                    log_info("SSL_get_verify_result=%ld", SSL_get_verify_result(client->tls.backend->ssl));
-                    check_peer_certificates(client->tls.backend->ssl, "server");
-                    result = ok;
-                }
-            }
+            /* client_tls_handshake closed the descriptor and reset sd, so
+             * the next candidate starts clean. */
 #else
-            (void)err;
-            result = error; /* unreachable under SOCKET_TLS_NONE */
+            close(sockfd);
+            client->sd = -1;
+            break; /* unreachable under SOCKET_TLS_NONE */
 #endif /* SOCKET_TLS_ENABLED */
-            } /* end of TLS-enabled branch */
+        }
+
+        freeaddrinfo(servinfo);
+
+        if (result != ok)
+        {
+            log_error("client: failed to connect");
         }
     }
 

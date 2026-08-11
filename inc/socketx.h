@@ -99,6 +99,22 @@ typedef struct socket_config
     local_host_config_t local;
     remote_host_config_t remote;
 
+    /* Milliseconds any single step of reaching a peer may stall before it
+     * is given up on: the connect, the TLS handshake, and each blocking
+     * receive. 0 waits as long as the kernel would, which is the historical
+     * behaviour and stays the default.
+     *
+     * Worth setting on a client. An address can complete the TCP handshake
+     * and then say nothing at all -- a black-holed route does exactly that
+     * -- and the handshake has no bound of its own, so the calling thread
+     * is gone for good. An address that drops SYNs instead is bounded only
+     * by tcp_syn_retries, a little over two minutes per address and
+     * cumulative across the addresses a name resolves to.
+     *
+     * With it set, a bad address costs this much and socket_connect moves
+     * on to the next one the name gave. */
+    uint32_t io_timeout_ms;
+
     /* When true, sets SO_REUSEPORT so multiple processes can bind to
      * the same port.  Defaults to false in plain/secure helpers. */
     bool reuse_port;
@@ -117,6 +133,9 @@ typedef struct socket
     socket_role_t role;
     local_host_config_t local;
     remote_host_config_t remote;
+
+    /* Copied from the config; see io_timeout_ms there. */
+    uint32_t io_timeout_ms;
 
     int listen_sd;
     int sd;
