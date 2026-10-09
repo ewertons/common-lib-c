@@ -22,40 +22,160 @@
 #define SERVER_PK_PATH "/tmp/http-c-certs/server/server.key.pem"
 #define CA_CHAIN_PATH "/tmp/http-c-certs/ca/chain.ca.cert.pem"
 
+#if !defined(SOCKET_TLS_NONE)
+#include <stdio.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+
+/* The fixtures are minted for a limited time, and an expired one fails the
+ * handshake exactly as a broken TLS path would. Named for what it is, and
+ * before any thread is started, so the failure is one clean line. */
+static void assert_tls_fixture_current(const char* path)
+{
+    FILE* file = fopen(path, "r");
+    if (file == NULL)
+    {
+        fail_msg("TLS fixture %s is missing; mint the set under /tmp/http-c-certs "
+                 "(see .github/workflows/ci-linux.yml)", path);
+    }
+    X509* certificate = PEM_read_X509(file, NULL, NULL, NULL);
+    (void)fclose(file);
+    if (certificate == NULL)
+    {
+        fail_msg("TLS fixture %s is not a PEM certificate", path);
+    }
+    bool expired = X509_cmp_current_time(X509_get0_notAfter(certificate)) <= 0;
+    X509_free(certificate);
+    if (expired)
+    {
+        fail_msg("TLS fixture %s has expired; re-mint the set under /tmp/http-c-certs "
+                 "(see .github/workflows/ci-linux.yml)", path);
+    }
+}
+
+static void assert_tls_fixtures_current(void)
+{
+    assert_tls_fixture_current(CA_CHAIN_PATH);
+    assert_tls_fixture_current(SERVER_CERT_PATH);
+    assert_tls_fixture_current(CLIENT_CERT_PATH);
+}
+#else
+static void assert_tls_fixtures_current(void)
+{
+}
+#endif
+
+/* What socket_client_and_server_success leaves behind when it fails.
+ *
+ * cmocka leaves a failed test by longjmp, so the clean-up at the end of the
+ * body never runs -- and the accept task was handed sockets on that body's
+ * stack. A handshake that failed (an expired fixture is enough) let the
+ * task write its result into a frame the next test was already using:
+ * corruption, and a segfault whenever the timing lined up. The sockets are
+ * static and this teardown, which cmocka runs after a failure too, ends the
+ * task before anything else runs. */
+#define CLIENT_AND_SERVER_PORT 5578
+
+static socket_t s_client_socket;
+static socket_t s_server_listen_socket;
+static socket_t s_server_socket;
+static bool     s_client_initialized;
+static bool     s_listen_initialized;
+static bool     s_server_accepted;
+static task_t*  s_accept_task;
+
+/* An accept still waiting returns once something connects. */
+static void knock(int port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+    {
+        return;
+    }
+    struct sockaddr_in address;
+    (void)memset(&address, 0, sizeof(address));
+    address.sin_family      = AF_INET;
+    address.sin_port        = htons((uint16_t)port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    (void)connect(fd, (struct sockaddr*)&address, sizeof(address));
+    (void)close(fd);
+}
+
+static int end_client_and_server(void** state)
+{
+    (void)state;
+
+    if (s_accept_task != NULL)
+    {
+        if (!task_is_completed(s_accept_task))
+        {
+            knock(CLIENT_AND_SERVER_PORT);
+        }
+        if (!task_wait_timeout(s_accept_task, 10000))
+        {
+            /* Still using the listening socket, so nothing it can reach is
+             * torn down under it. */
+            print_error("the accept task did not end\n");
+            return -1;
+        }
+        s_server_accepted = task_get_result(s_accept_task) == ok;
+        task_release(s_accept_task);
+        s_accept_task = NULL;
+    }
+    if (s_server_accepted)
+    {
+        (void)socket_deinit(&s_server_socket);
+        s_server_accepted = false;
+    }
+    if (s_client_initialized)
+    {
+        (void)socket_deinit(&s_client_socket);
+        s_client_initialized = false;
+    }
+    if (s_listen_initialized)
+    {
+        (void)socket_deinit(&s_server_listen_socket);
+        s_listen_initialized = false;
+    }
+    return 0;
+}
+
 static void socket_client_and_server_success(void** state)
 {
     (void)state;
-    int port = 5578;
     uint8_t raw_write_buffer[10];
     uint8_t raw_read_buffer[10];
     span_t read_buffer = span_from_memory(raw_read_buffer);
 
+    assert_tls_fixtures_current();
+
     socket_config_t client_socket_config = socket_get_default_secure_client_config();
     client_socket_config.remote.hostname = span_from_str_literal("localhost");
-    client_socket_config.remote.port = port;
+    client_socket_config.remote.port = CLIENT_AND_SERVER_PORT;
     client_socket_config.tls.certificate_file = CLIENT_CERT_PATH;
     client_socket_config.tls.private_key_file = CLIENT_PK_PATH;
     client_socket_config.tls.trusted_certificate_file = CA_CHAIN_PATH;
 
     socket_config_t server_socket_config = socket_get_default_secure_server_config();
-    server_socket_config.local.port = port;
+    server_socket_config.local.port = CLIENT_AND_SERVER_PORT;
     server_socket_config.tls.certificate_file = SERVER_CERT_PATH;
     server_socket_config.tls.private_key_file = SERVER_PK_PATH;
 
-    socket_t client_socket;
-    socket_t server_listen_socket;
-    socket_t server_socket;
+    assert_int_equal(socket_init(&s_client_socket, &client_socket_config), ok);
+    s_client_initialized = true;
+    assert_int_equal(socket_init(&s_server_listen_socket, &server_socket_config), ok);
+    s_listen_initialized = true;
 
-    assert_int_equal(socket_init(&client_socket, &client_socket_config), ok);
-    assert_int_equal(socket_init(&server_listen_socket, &server_socket_config), ok);
+    s_accept_task = socket_accept_async(&s_server_listen_socket, &s_server_socket);
+    assert_non_null(s_accept_task);
 
-    task_t* accept_task = socket_accept_async(&server_listen_socket, &server_socket);
-    assert_non_null(accept_task);
+    assert_int_equal(socket_connect(&s_client_socket), ok);
 
-    assert_int_equal(socket_connect(&client_socket), ok);
-
-    assert_true(task_wait(accept_task));
-    task_release(accept_task);
+    assert_true(task_wait(s_accept_task));
+    s_server_accepted = task_get_result(s_accept_task) == ok;
+    task_release(s_accept_task);
+    s_accept_task = NULL;
+    assert_true(s_server_accepted);
 
     for (int i = 0; i < 10; i++)
     {
@@ -64,14 +184,16 @@ static void socket_client_and_server_success(void** state)
       write_buffer = span_copy_int32(write_buffer, i, NULL);
 
       assert_int_not_equal(0, span_get_size(write_buffer));
-      assert_int_equal(socket_write(&client_socket, write_buffer), ok);
-      assert_int_equal(socket_read(&server_socket, read_buffer, &bytes_read, NULL), ok);
+      assert_int_equal(socket_write(&s_client_socket, write_buffer), ok);
+      assert_int_equal(socket_read(&s_server_socket, read_buffer, &bytes_read, NULL), ok);
       assert_int_equal(span_get_size(bytes_read), span_get_size(write_buffer));
       assert_memory_equal(span_get_ptr(bytes_read), span_get_ptr(write_buffer), span_get_size(bytes_read));
     }
 
-    assert_int_equal(socket_deinit(&client_socket), ok);
-    assert_int_equal(socket_deinit(&server_socket), ok);
+    s_client_initialized = false;
+    assert_int_equal(socket_deinit(&s_client_socket), ok);
+    s_server_accepted = false;
+    assert_int_equal(socket_deinit(&s_server_socket), ok);
 }
 
 static void socket_set_nonblocking_invalid_fd_fails(void** state)
@@ -562,7 +684,7 @@ static void socket_connect_gives_up_on_an_address_that_swallows_syns(void** stat
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
-      cmocka_unit_test(socket_client_and_server_success),
+      cmocka_unit_test_teardown(socket_client_and_server_success, end_client_and_server),
       cmocka_unit_test(socket_set_nonblocking_invalid_fd_fails),
       cmocka_unit_test(socket_set_nonblocking_valid_fd_succeeds),
       cmocka_unit_test(socket_get_io_want_on_null_returns_zero),
