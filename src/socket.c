@@ -15,7 +15,7 @@
 #endif
 
 #include <signal.h>
-#include <poll.h>
+#include <sys/poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
