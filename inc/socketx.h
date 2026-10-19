@@ -92,12 +92,47 @@ typedef struct remote_host_config
     int port;
 } remote_host_config_t;
 
+/* An HTTP proxy that client connections are tunnelled through with
+ * `CONNECT <remote.hostname>:<remote.port>` (RFC 9110 section 9.3.6).
+ *
+ * An empty hostname means no proxy, which is the default: a zero-initialised
+ * configuration connects straight to the remote exactly as before.
+ *
+ * With a proxy set, socket_connect resolves and connects to the proxy only --
+ * the remote name is never resolved locally, the proxy does that -- asks it
+ * for a tunnel, and requires a 2xx answer. TLS (when enabled) then runs
+ * end-to-end through the tunnel, with SNI and certificate hostname
+ * verification against remote.hostname, never against the proxy. Plain TCP
+ * connections are tunnelled the same way.
+ *
+ * io_timeout_ms bounds the proxy steps as it bounds the others: the TCP
+ * connect to the proxy and the wait for its complete answer to CONNECT.
+ *
+ * Only the blocking socket_connect supports a proxy;
+ * socket_connect_nb_begin returns invalid_argument when one is set.
+ *
+ * The spans are referenced, not copied, and must outlive the socket.
+ * Ignored for socket_role_server. */
+typedef struct proxy_host_config
+{
+    span_t hostname;
+    int port;
+
+    /* Optional. Sent verbatim as the value of a Proxy-Authorization header,
+     * e.g. "Basic dXNlcjpwYXNzd29yZA==". Empty sends no such header. Never
+     * logged. Must not contain CR or LF. */
+    span_t authorization;
+} proxy_host_config_t;
+
 typedef struct socket_config
 {
     socket_role_t role;
 
     local_host_config_t local;
     remote_host_config_t remote;
+
+    /* Optional; see proxy_host_config_t. Empty hostname = direct connection. */
+    proxy_host_config_t proxy;
 
     /* Milliseconds any single step of reaching a peer may stall before it
      * is given up on: the connect, the TLS handshake, and each blocking
@@ -133,6 +168,9 @@ typedef struct socket
     socket_role_t role;
     local_host_config_t local;
     remote_host_config_t remote;
+
+    /* Copied from the config; see proxy_host_config_t. */
+    proxy_host_config_t proxy;
 
     /* Copied from the config; see io_timeout_ms there. */
     uint32_t io_timeout_ms;
@@ -237,6 +275,10 @@ result_t socket_write  (socket_t* socket, span_t data);
  *
  * For a client role, after `socket_init`:
  *   1. socket_connect_nb_begin(&client)          -> ok (TCP in progress) | error
+ *                                                   (invalid_argument when a
+ *                                                   proxy is configured: the
+ *                                                   CONNECT tunnel is only
+ *                                                   supported by socket_connect)
  *   2. loop: socket_connect_nb_continue(&client) -> try_again | ok | error
  *   3. loop: socket_handshake_nb(&client)        -> try_again | ok | error
  *
