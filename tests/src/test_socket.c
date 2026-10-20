@@ -6,6 +6,7 @@
 
 #include "tests.h"
 #include "socketx.h"
+#include "logging.h"
 
 #include <unistd.h> 
 #include <string.h>
@@ -15,6 +16,9 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
 
 #define CLIENT_CERT_PATH "/tmp/http-c-certs/client/client.cert.pem"
 #define CLIENT_PK_PATH "/tmp/http-c-certs/client/client.key.pem"
@@ -559,6 +563,508 @@ static void socket_connect_gives_up_on_an_address_that_swallows_syns(void** stat
     (void)socket_deinit(&client);
 }
 
+/* --- proxy (HTTP CONNECT) ----------------------------------------------- *
+ *
+ * A minimal CONNECT proxy on loopback, one connection per test. Whatever
+ * host the client asks for, it dials 127.0.0.1:target_port -- which is also
+ * what lets a test ask for a name that does not resolve anywhere and prove
+ * the client never tried to resolve it itself.
+ */
+
+typedef enum test_proxy_behavior
+{
+    test_proxy_relay,
+    test_proxy_answer_with_tunnel_bytes,
+    test_proxy_refuse,
+    test_proxy_close_early,
+    test_proxy_silent,
+    test_proxy_malformed_status_line,
+} test_proxy_behavior_t;
+
+typedef struct test_proxy
+{
+    test_proxy_behavior_t behavior;
+    int listener;
+    uint16_t port;
+    uint16_t target_port;
+    char request[2048];
+    size_t request_length;
+    pthread_t thread;
+} test_proxy_t;
+
+static int loopback_listener(uint16_t* out_port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert_true(fd >= 0);
+
+    struct sockaddr_in address;
+    (void)memset(&address, 0, sizeof(address));
+    address.sin_family      = AF_INET;
+    address.sin_port        = 0;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    assert_int_equal(bind(fd, (struct sockaddr*)&address, sizeof(address)), 0);
+    assert_int_equal(listen(fd, 4), 0);
+
+    socklen_t length = sizeof(address);
+    assert_int_equal(getsockname(fd, (struct sockaddr*)&address, &length), 0);
+    *out_port = ntohs(address.sin_port);
+    return fd;
+}
+
+static void send_text(int fd, const char* text)
+{
+    (void)send(fd, text, strlen(text), MSG_NOSIGNAL);
+}
+
+static void relay(int first, int second)
+{
+    uint8_t buffer[4096];
+    for (;;)
+    {
+        struct pollfd descriptors[2] = {
+            { .fd = first,  .events = POLLIN, .revents = 0 },
+            { .fd = second, .events = POLLIN, .revents = 0 },
+        };
+        if (poll(descriptors, 2, 10000) <= 0)
+        {
+            return;
+        }
+        for (int index = 0; index < 2; index++)
+        {
+            if (descriptors[index].revents == 0)
+            {
+                continue;
+            }
+            int from = index == 0 ? first : second;
+            int to   = index == 0 ? second : first;
+            ssize_t received = recv(from, buffer, sizeof(buffer), 0);
+            if (received <= 0 || send(to, buffer, (size_t)received, MSG_NOSIGNAL) != received)
+            {
+                return;
+            }
+        }
+    }
+}
+
+static void* test_proxy_run(void* argument)
+{
+    test_proxy_t* proxy = (test_proxy_t*)argument;
+
+    int client = accept(proxy->listener, NULL, NULL);
+    if (client < 0)
+    {
+        return NULL;
+    }
+
+    while (proxy->request_length < sizeof(proxy->request) - 1 &&
+           strstr(proxy->request, "\r\n\r\n") == NULL)
+    {
+        ssize_t received = recv(client, proxy->request + proxy->request_length,
+                                sizeof(proxy->request) - 1 - proxy->request_length, 0);
+        if (received <= 0)
+        {
+            break;
+        }
+        proxy->request_length += (size_t)received;
+    }
+
+    switch (proxy->behavior)
+    {
+        case test_proxy_relay:
+        {
+            int target = socket(AF_INET, SOCK_STREAM, 0);
+            struct sockaddr_in address;
+            (void)memset(&address, 0, sizeof(address));
+            address.sin_family      = AF_INET;
+            address.sin_port        = htons(proxy->target_port);
+            address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (target >= 0 && connect(target, (struct sockaddr*)&address, sizeof(address)) == 0)
+            {
+                send_text(client, "HTTP/1.1 200 Connection established\r\nProxy-Agent: test\r\n\r\n");
+                relay(client, target);
+            }
+            else
+            {
+                send_text(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n");
+            }
+            if (target >= 0)
+            {
+                close(target);
+            }
+            break;
+        }
+        case test_proxy_answer_with_tunnel_bytes:
+            /* One write, so the client sees the answer and the remote's first
+             * bytes together and must not swallow the latter. */
+            send_text(client, "HTTP/1.0 200 OK\r\n\r\nHELLO");
+            {
+                char drain[64];
+                while (recv(client, drain, sizeof(drain), 0) > 0) { }
+            }
+            break;
+        case test_proxy_refuse:
+            send_text(client, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+            break;
+        case test_proxy_close_early:
+            send_text(client, "HTTP/1.1 20");
+            break;
+        case test_proxy_silent:
+        {
+            char drain[64];
+            while (recv(client, drain, sizeof(drain), 0) > 0) { }
+            break;
+        }
+        case test_proxy_malformed_status_line:
+            send_text(client, "SSH-2.0-OpenSSH_9.6\r\n\r\n");
+            break;
+    }
+
+    close(client);
+    return NULL;
+}
+
+static void test_proxy_start(test_proxy_t* proxy, test_proxy_behavior_t behavior, uint16_t target_port)
+{
+    (void)memset(proxy, 0, sizeof(*proxy));
+    proxy->behavior    = behavior;
+    proxy->target_port = target_port;
+    proxy->listener    = loopback_listener(&proxy->port);
+    assert_int_equal(pthread_create(&proxy->thread, NULL, test_proxy_run, proxy), 0);
+}
+
+static void test_proxy_stop(test_proxy_t* proxy)
+{
+    /* Wakes an accept() that never got a connection. */
+    (void)shutdown(proxy->listener, SHUT_RDWR);
+    assert_int_equal(pthread_join(proxy->thread, NULL), 0);
+    close(proxy->listener);
+}
+
+static socket_config_t proxied_plain_client(const char* remote_hostname, uint16_t remote_port,
+                                            uint16_t proxy_port, uint32_t io_timeout_ms)
+{
+    socket_config_t cfg = socket_get_default_plain_client_config();
+    cfg.remote.hostname = span_init((uint8_t*)(uintptr_t)remote_hostname, (uint32_t)strlen(remote_hostname));
+    cfg.remote.port     = remote_port;
+    cfg.proxy.hostname  = span_from_str_literal("127.0.0.1");
+    cfg.proxy.port      = proxy_port;
+    cfg.io_timeout_ms   = io_timeout_ms;
+    return cfg;
+}
+
+static void socket_default_client_configs_have_no_proxy(void** state)
+{
+    (void)state;
+    socket_config_t secure = socket_get_default_secure_client_config();
+    socket_config_t plain  = socket_get_default_plain_client_config();
+
+    assert_true(span_is_empty(secure.proxy.hostname));
+    assert_true(span_is_empty(secure.proxy.authorization));
+    assert_true(span_is_empty(plain.proxy.hostname));
+}
+
+static void socket_proxy_tunnels_a_plain_connection(void** state)
+{
+    (void)state;
+    uint16_t target_port;
+    int target_listener = loopback_listener(&target_port);
+
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_relay, target_port);
+
+    /* Not resolvable here: only the proxy may resolve the remote name. */
+    socket_config_t cfg = proxied_plain_client("remote.invalid", target_port, proxy.port, 5000);
+    cfg.proxy.authorization = span_from_str_literal("Basic dGVzdDpzZWNyZXQ=");
+
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    int target = accept(target_listener, NULL, NULL);
+    assert_true(target >= 0);
+
+    assert_int_equal(socket_write(&client, span_from_str_literal("ping")), ok);
+    char received[8] = { 0 };
+    assert_int_equal(recv(target, received, 4, MSG_WAITALL), 4);
+    assert_memory_equal(received, "ping", 4);
+
+    send_text(target, "pong");
+    uint8_t raw[8];
+    span_t got;
+    assert_int_equal(socket_read(&client, span_from_memory(raw), &got, NULL), ok);
+    assert_int_equal(span_get_size(got), 4);
+    assert_memory_equal(span_get_ptr(got), "pong", 4);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    close(target);
+    test_proxy_stop(&proxy);
+    close(target_listener);
+
+    char expected[128];
+    (void)snprintf(expected, sizeof(expected),
+                   "CONNECT remote.invalid:%u HTTP/1.1\r\nHost: remote.invalid:%u\r\n",
+                   target_port, target_port);
+    assert_true(strncmp(proxy.request, expected, strlen(expected)) == 0);
+    assert_non_null(strstr(proxy.request, "\r\nProxy-Authorization: Basic dGVzdDpzZWNyZXQ=\r\n"));
+    assert_int_equal(strcmp(proxy.request + proxy.request_length - 4, "\r\n\r\n"), 0);
+}
+
+static void socket_proxy_without_authorization_sends_no_header(void** state)
+{
+    (void)state;
+    uint16_t target_port;
+    int target_listener = loopback_listener(&target_port);
+
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_relay, target_port);
+
+    socket_config_t cfg = proxied_plain_client("localhost", target_port, proxy.port, 5000);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    test_proxy_stop(&proxy);
+    close(target_listener);
+
+    assert_null(strstr(proxy.request, "Proxy-Authorization"));
+}
+
+/* Bytes that arrive in the same segment as the proxy's answer belong to the
+ * tunnel and must reach the caller. */
+static void socket_proxy_keeps_bytes_that_follow_its_answer(void** state)
+{
+    (void)state;
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_answer_with_tunnel_bytes, 0);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 80, proxy.port, 5000);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), ok);
+
+    uint8_t raw[16];
+    span_t got;
+    assert_int_equal(socket_read(&client, span_from_memory(raw), &got, NULL), ok);
+    assert_int_equal(span_get_size(got), 5);
+    assert_memory_equal(span_get_ptr(got), "HELLO", 5);
+
+    assert_int_equal(socket_deinit(&client), ok);
+    test_proxy_stop(&proxy);
+}
+
+static bool tls_fixtures_present(void)
+{
+    return access(CA_CHAIN_PATH, R_OK) == 0 && access(SERVER_CERT_PATH, R_OK) == 0;
+}
+
+static result_t proxied_tls_connect(const char* remote_hostname, int port, bool exchange_data)
+{
+    socket_config_t server_cfg = socket_get_default_secure_server_config();
+    server_cfg.local.port             = port;
+    server_cfg.local.address          = "127.0.0.1";
+    server_cfg.tls.certificate_file   = SERVER_CERT_PATH;
+    server_cfg.tls.private_key_file   = SERVER_PK_PATH;
+
+    socket_t listener;
+    socket_t server;
+    assert_int_equal(socket_init(&listener, &server_cfg), ok);
+
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_relay, (uint16_t)port);
+
+    socket_config_t cfg = socket_get_default_secure_client_config();
+    cfg.remote.hostname = span_init((uint8_t*)(uintptr_t)remote_hostname, (uint32_t)strlen(remote_hostname));
+    cfg.remote.port     = port;
+    cfg.proxy.hostname  = span_from_str_literal("127.0.0.1");
+    cfg.proxy.port      = proxy.port;
+    cfg.io_timeout_ms   = 5000;
+    cfg.tls.trusted_certificate_file = CA_CHAIN_PATH;
+
+    task_t* accept_task = socket_accept_async(&listener, &server);
+    assert_non_null(accept_task);
+
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    result_t result = socket_connect(&client);
+
+    if (result == ok && exchange_data)
+    {
+        assert_true(task_wait(accept_task));
+        assert_int_equal(socket_write(&client, span_from_str_literal("secret")), ok);
+        uint8_t raw[16];
+        span_t got;
+        assert_int_equal(socket_read(&server, span_from_memory(raw), &got, NULL), ok);
+        assert_int_equal(span_get_size(got), 6);
+        assert_memory_equal(span_get_ptr(got), "secret", 6);
+    }
+
+    (void)socket_deinit(&client);
+    (void)task_wait(accept_task);
+    task_release(accept_task);
+    (void)socket_deinit(&server);
+    test_proxy_stop(&proxy);
+    (void)socket_deinit(&listener);
+
+    return result;
+}
+
+/* TLS runs end-to-end through the tunnel, verified against the remote name. */
+static void socket_proxy_tunnels_tls_to_the_remote(void** state)
+{
+    (void)state;
+    if (!tls_fixtures_present())
+    {
+        skip();
+    }
+    assert_int_equal(proxied_tls_connect("localhost", 5601, true), ok);
+}
+
+/* Same tunnel, same server, but the remote name is not the certificate's:
+ * verification must be against the name asked for, not the proxy or the
+ * address that ended up answering. */
+static void socket_proxy_tls_rejects_a_certificate_for_another_name(void** state)
+{
+    (void)state;
+    if (!tls_fixtures_present())
+    {
+        skip();
+    }
+    assert_int_not_equal(proxied_tls_connect("not-localhost.invalid", 5602, false), ok);
+}
+
+static char captured_log[4096];
+
+static void capture_log(log_level_t level, const char* file, int line,
+                        const char* message, va_list arguments, void* user_context)
+{
+    (void)level; (void)file; (void)line; (void)user_context;
+    size_t used = strlen(captured_log);
+    if (used < sizeof(captured_log) - 1)
+    {
+        (void)vsnprintf(captured_log + used, sizeof(captured_log) - used, message, arguments);
+        (void)strncat(captured_log, "\n", sizeof(captured_log) - strlen(captured_log) - 1);
+    }
+}
+
+/* The status is what tells an operator why; the credentials must never show. */
+static void socket_proxy_refusal_fails_the_connect(void** state)
+{
+    (void)state;
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_refuse, 0);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 443, proxy.port, 5000);
+    cfg.proxy.authorization = span_from_str_literal("Basic c2VjcmV0LXZhbHVl");
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    captured_log[0] = '\0';
+    log_set_global_sink(capture_log, LOG_TRACE, NULL);
+    result_t result = socket_connect(&client);
+    log_set_global_sink(NULL, LOG_OFF, NULL);
+
+    assert_int_equal(result, error);
+    assert_int_equal(client.sd, -1);
+    assert_non_null(strstr(captured_log, "status 403"));
+    assert_null(strstr(captured_log, "c2VjcmV0LXZhbHVl"));
+
+    (void)socket_deinit(&client);
+    test_proxy_stop(&proxy);
+}
+
+static void socket_proxy_closing_early_fails_the_connect(void** state)
+{
+    (void)state;
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_close_early, 0);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 443, proxy.port, 5000);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), error);
+
+    (void)socket_deinit(&client);
+    test_proxy_stop(&proxy);
+}
+
+static void socket_proxy_malformed_status_line_fails_the_connect(void** state)
+{
+    (void)state;
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_malformed_status_line, 0);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 443, proxy.port, 5000);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), error);
+
+    (void)socket_deinit(&client);
+    test_proxy_stop(&proxy);
+}
+
+static void socket_proxy_that_never_answers_times_out(void** state)
+{
+    (void)state;
+    test_proxy_t proxy;
+    test_proxy_start(&proxy, test_proxy_silent, 0);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 443, proxy.port, 500);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+
+    uint64_t started = monotonic_ms();
+    assert_int_equal(socket_connect(&client), error);
+    uint64_t elapsed = monotonic_ms() - started;
+
+    assert_true(elapsed >= 400);
+    assert_true(elapsed < 3000);
+
+    (void)socket_deinit(&client);
+    test_proxy_stop(&proxy);
+}
+
+static void socket_proxy_rejects_header_injection(void** state)
+{
+    (void)state;
+    uint16_t proxy_port;
+    int listener = loopback_listener(&proxy_port);
+
+    socket_config_t cfg = proxied_plain_client("localhost", 443, proxy_port, 1000);
+    cfg.proxy.authorization = span_from_str_literal("Basic x\r\nX-Injected: 1");
+
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect(&client), invalid_argument);
+
+    (void)socket_deinit(&client);
+    close(listener);
+}
+
+static void socket_proxy_port_out_of_range_is_rejected(void** state)
+{
+    (void)state;
+    socket_t client;
+
+    socket_config_t zero = proxied_plain_client("localhost", 443, 0, 0);
+    assert_int_equal(socket_init(&client, &zero), invalid_argument);
+
+    socket_config_t too_large = proxied_plain_client("localhost", 443, 0, 0);
+    too_large.proxy.port = 70000;
+    assert_int_equal(socket_init(&client, &too_large), invalid_argument);
+}
+
+static void socket_proxy_is_not_supported_by_the_non_blocking_connect(void** state)
+{
+    (void)state;
+    socket_config_t cfg = proxied_plain_client("localhost", 443, 3128, 0);
+    socket_t client;
+    assert_int_equal(socket_init(&client, &cfg), ok);
+    assert_int_equal(socket_connect_nb_begin(&client), invalid_argument);
+    assert_int_equal(socket_deinit(&client), ok);
+}
+
 int test_socket()
 {
   const struct CMUnitTest tests[] = {
@@ -582,6 +1088,19 @@ int test_socket()
       cmocka_unit_test(socket_connect_leaves_the_descriptor_blocking),
       cmocka_unit_test(socket_connect_reports_a_refused_port_promptly),
       cmocka_unit_test(socket_connect_gives_up_on_an_address_that_swallows_syns),
+      cmocka_unit_test(socket_default_client_configs_have_no_proxy),
+      cmocka_unit_test(socket_proxy_tunnels_a_plain_connection),
+      cmocka_unit_test(socket_proxy_without_authorization_sends_no_header),
+      cmocka_unit_test(socket_proxy_keeps_bytes_that_follow_its_answer),
+      cmocka_unit_test(socket_proxy_tunnels_tls_to_the_remote),
+      cmocka_unit_test(socket_proxy_tls_rejects_a_certificate_for_another_name),
+      cmocka_unit_test(socket_proxy_refusal_fails_the_connect),
+      cmocka_unit_test(socket_proxy_closing_early_fails_the_connect),
+      cmocka_unit_test(socket_proxy_malformed_status_line_fails_the_connect),
+      cmocka_unit_test(socket_proxy_that_never_answers_times_out),
+      cmocka_unit_test(socket_proxy_rejects_header_injection),
+      cmocka_unit_test(socket_proxy_port_out_of_range_is_rejected),
+      cmocka_unit_test(socket_proxy_is_not_supported_by_the_non_blocking_connect),
   };
 
   return cmocka_run_group_tests_name("socket_client_and_server_success", tests, NULL, NULL);

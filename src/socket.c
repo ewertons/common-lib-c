@@ -518,6 +518,7 @@ result_t socket_init(socket_t *s, socket_config_t *config)
     s->role        = config->role;
     s->local       = config->local;
     s->remote      = config->remote;
+    s->proxy       = config->proxy;
     s->tls.enabled = config->tls.enable;
     s->io_timeout_ms = config->io_timeout_ms;
 
@@ -541,6 +542,14 @@ result_t socket_init(socket_t *s, socket_config_t *config)
             log_error("bind address '%s' is not an IPv4 address", config->local.address);
             return invalid_argument;
         }
+    }
+
+    if (config->role == socket_role_client &&
+        !span_is_empty(config->proxy.hostname) &&
+        (config->proxy.port <= 0 || config->proxy.port > 65535))
+    {
+        log_error("proxy port %d is out of range", config->proxy.port);
+        return invalid_argument;
     }
 
 #if SOCKET_TLS_ENABLED
@@ -1092,6 +1101,311 @@ static result_t client_tls_handshake(socket_t* client)
 }
 #endif /* SOCKET_TLS_ENABLED */
 
+/* ------------------------------------------------------------------------- *
+ * HTTP CONNECT proxy tunnel (see proxy_host_config_t in socketx.h).
+ * ------------------------------------------------------------------------- */
+
+#ifndef SOCKET_PROXY_REQUEST_MAXIMUM_SIZE
+#define SOCKET_PROXY_REQUEST_MAXIMUM_SIZE 1024
+#endif
+
+/* Bound on the proxy's whole answer to CONNECT, status line and headers. */
+#ifndef SOCKET_PROXY_RESPONSE_MAXIMUM_SIZE
+#define SOCKET_PROXY_RESPONSE_MAXIMUM_SIZE 2048
+#endif
+
+static bool socket_proxy_is_configured(const socket_t* client)
+{
+    return !span_is_empty(client->proxy.hostname);
+}
+
+/* Callers commonly build hostname spans over NUL-terminated strings, and some
+ * count the terminator; stop at it so it never ends up on the wire. */
+static uint32_t span_text_length(span_t text)
+{
+    const uint8_t* pointer = span_get_ptr(text);
+    uint32_t length = 0;
+    while (length < span_get_size(text) && pointer[length] != '\0')
+    {
+        length++;
+    }
+    return length;
+}
+
+/* A CR or LF would let a configuration value inject headers into the CONNECT
+ * request. */
+static bool span_has_line_break(span_t text)
+{
+    for (uint32_t index = 0; index < span_get_size(text); index++)
+    {
+        uint8_t character = span_get(text, index);
+        if (character == '\r' || character == '\n')
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static result_t proxy_send_all(int fd, const char* data, size_t length)
+{
+    while (length > 0)
+    {
+        ssize_t sent = send(fd, data, length, 0);
+        if (sent < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        if (sent <= 0)
+        {
+            log_error("proxy: sending CONNECT failed (%s)", strerror(errno));
+            return error;
+        }
+        data   += sent;
+        length -= (size_t)sent;
+    }
+    return ok;
+}
+
+/* Waits until fd is readable. deadline 0 waits forever. */
+static result_t proxy_wait_readable(int fd, uint64_t deadline, uint32_t timeout_ms)
+{
+    for (;;)
+    {
+        int poll_timeout = -1;
+        if (deadline != 0)
+        {
+            uint64_t now = monotonic_ms();
+            if (now >= deadline)
+            {
+                log_error("proxy: no complete answer to CONNECT within %u ms", timeout_ms);
+                return error;
+            }
+            poll_timeout = (int)(deadline - now);
+        }
+
+        struct pollfd descriptor = { .fd = fd, .events = POLLIN, .revents = 0 };
+        int ready = poll(&descriptor, 1, poll_timeout);
+
+        if (ready > 0)
+        {
+            return ok;
+        }
+        if (ready == 0)
+        {
+            log_error("proxy: no complete answer to CONNECT within %u ms", timeout_ms);
+            return error;
+        }
+        if (errno != EINTR)
+        {
+            log_error("proxy: poll (%s)", strerror(errno));
+            return error;
+        }
+    }
+}
+
+/* Reads the proxy's answer up to and including the blank line that ends its
+ * headers, and not one byte further: whatever follows belongs to the tunnel
+ * (the remote's first bytes), so it is peeked first and only the answer
+ * itself is consumed.
+ *
+ * The whole answer shares one io_timeout_ms budget, so a proxy that trickles
+ * bytes cannot stretch it. */
+static result_t proxy_read_response(int fd, uint32_t timeout_ms,
+                                    char* response, size_t capacity,
+                                    size_t* out_length)
+{
+    static const char terminator[] = "\r\n\r\n";
+    const size_t terminator_length = sizeof(terminator) - 1;
+    const uint64_t deadline = timeout_ms == 0 ? 0 : monotonic_ms() + (uint64_t)timeout_ms;
+    size_t length = 0;
+
+    for (;;)
+    {
+        if (length >= capacity)
+        {
+            log_error("proxy: answer to CONNECT exceeds %u bytes", (unsigned)capacity);
+            return error;
+        }
+
+        if (proxy_wait_readable(fd, deadline, timeout_ms) != ok)
+        {
+            return error;
+        }
+
+        ssize_t peeked = recv(fd, response + length, capacity - length, MSG_PEEK);
+        if (peeked < 0)
+        {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                continue;
+            }
+            log_error("proxy: receiving the answer to CONNECT failed (%s)", strerror(errno));
+            return error;
+        }
+        if (peeked == 0)
+        {
+            log_error("proxy: connection closed before the answer to CONNECT was complete");
+            return error;
+        }
+
+        /* Search from a little before the new bytes, so a terminator split
+         * across two reads is still found. */
+        size_t available    = length + (size_t)peeked;
+        size_t search_start = length >= terminator_length - 1 ? length - (terminator_length - 1) : 0;
+        size_t consume      = (size_t)peeked;
+        bool   complete     = false;
+
+        for (size_t index = search_start; index + terminator_length <= available; index++)
+        {
+            if (memcmp(response + index, terminator, terminator_length) == 0)
+            {
+                consume  = index + terminator_length - length;
+                complete = true;
+                break;
+            }
+        }
+
+        ssize_t received = recv(fd, response + length, consume, 0);
+        if (received != (ssize_t)consume)
+        {
+            log_error("proxy: receiving the answer to CONNECT failed (%s)", strerror(errno));
+            return error;
+        }
+        length += consume;
+
+        if (complete)
+        {
+            *out_length = length;
+            return ok;
+        }
+    }
+}
+
+/* "HTTP/1.x NNN[ reason]\r\n" -> NNN. */
+static result_t proxy_parse_status(const char* response, size_t length, int* out_status)
+{
+    static const char prefix[] = "HTTP/1.";
+    const size_t prefix_length = sizeof(prefix) - 1;
+
+    if (length < prefix_length + 6 ||
+        memcmp(response, prefix, prefix_length) != 0 ||
+        response[prefix_length] < '0' || response[prefix_length] > '9' ||
+        response[prefix_length + 1] != ' ')
+    {
+        return error;
+    }
+
+    const char* code = response + prefix_length + 2;
+    int status = 0;
+    for (int index = 0; index < 3; index++)
+    {
+        if (code[index] < '0' || code[index] > '9')
+        {
+            return error;
+        }
+        status = status * 10 + (code[index] - '0');
+    }
+
+    if (code[3] != ' ' && code[3] != '\r')
+    {
+        return error;
+    }
+
+    *out_status = status;
+    return ok;
+}
+
+/* Asks the proxy connected on fd for a tunnel to client->remote. On success
+ * the descriptor carries the remote's byte stream from here on. Leaves the
+ * descriptor open either way; the caller owns it. */
+static result_t proxy_open_tunnel(socket_t* client, int fd)
+{
+    span_t   remote_hostname = client->remote.hostname;
+    uint32_t remote_length   = span_text_length(remote_hostname);
+    span_t   authorization   = client->proxy.authorization;
+    uint32_t authorization_length = span_text_length(authorization);
+
+    if (remote_length == 0 || client->remote.port <= 0 || client->remote.port > 65535)
+    {
+        log_error("proxy: the remote host and port to tunnel to are required");
+        return invalid_argument;
+    }
+
+    if (span_has_line_break(span_slice(remote_hostname, 0, remote_length)) ||
+        span_has_line_break(span_slice(authorization, 0, authorization_length)))
+    {
+        log_error("proxy: line break in the remote hostname or proxy authorization");
+        return invalid_argument;
+    }
+
+    /* An IPv6 literal needs brackets to be told apart from the port. */
+    const char* remote_text = (const char*)span_get_ptr(remote_hostname);
+    bool needs_brackets = memchr(remote_text, ':', remote_length) != NULL && remote_text[0] != '[';
+    const char* open_bracket  = needs_brackets ? "[" : "";
+    const char* close_bracket = needs_brackets ? "]" : "";
+
+    char request[SOCKET_PROXY_REQUEST_MAXIMUM_SIZE];
+    int request_length = snprintf(request, sizeof(request),
+        "CONNECT %s%.*s%s:%d HTTP/1.1\r\n"
+        "Host: %s%.*s%s:%d\r\n",
+        open_bracket, (int)remote_length, remote_text, close_bracket, client->remote.port,
+        open_bracket, (int)remote_length, remote_text, close_bracket, client->remote.port);
+
+    if (request_length > 0 && authorization_length > 0 &&
+        (size_t)request_length < sizeof(request))
+    {
+        request_length += snprintf(request + request_length, sizeof(request) - (size_t)request_length,
+            "Proxy-Authorization: %.*s\r\n",
+            (int)authorization_length, (const char*)span_get_ptr(authorization));
+    }
+
+    if (request_length > 0 && (size_t)request_length < sizeof(request))
+    {
+        request_length += snprintf(request + request_length, sizeof(request) - (size_t)request_length, "\r\n");
+    }
+
+    if (request_length <= 0 || (size_t)request_length >= sizeof(request))
+    {
+        log_error("proxy: CONNECT request exceeds %u bytes", (unsigned)sizeof(request));
+        return invalid_argument;
+    }
+
+    result_t result = proxy_send_all(fd, request, (size_t)request_length);
+
+    /* The request may hold credentials; do not leave them on the stack. */
+    (void)memset(request, 0, sizeof(request));
+
+    if (result != ok)
+    {
+        return result;
+    }
+
+    char   response[SOCKET_PROXY_RESPONSE_MAXIMUM_SIZE];
+    size_t response_length = 0;
+
+    if (proxy_read_response(fd, client->io_timeout_ms, response, sizeof(response), &response_length) != ok)
+    {
+        return error;
+    }
+
+    int status = 0;
+    if (proxy_parse_status(response, response_length, &status) != ok)
+    {
+        log_error("proxy: malformed status line in the answer to CONNECT");
+        return error;
+    }
+
+    if (status < 200 || status > 299)
+    {
+        log_error("proxy: CONNECT to %.*s:%d refused with status %d",
+                  (int)remote_length, remote_text, client->remote.port, status);
+        return error;
+    }
+
+    return ok;
+}
+
 result_t socket_connect(socket_t *client)
 {
     result_t result;
@@ -1112,13 +1426,34 @@ result_t socket_connect(socket_t *client)
 
         uint8_t port_string[6] = {0};
 
-        if (span_is_empty(span_copy_int32(span_from_memory(port_string), client->remote.port, NULL)))
+        /* Through a proxy, only the proxy is resolved and dialled; the
+         * remote name goes to the proxy in the CONNECT request. */
+        const bool through_proxy = socket_proxy_is_configured(client);
+        char proxy_hostname[256];
+        const char* connect_hostname = (const char*)span_get_ptr(client->remote.hostname);
+        int connect_port = client->remote.port;
+
+        if (through_proxy)
+        {
+            uint32_t proxy_hostname_length = span_text_length(client->proxy.hostname);
+            if (proxy_hostname_length == 0 || proxy_hostname_length >= sizeof(proxy_hostname))
+            {
+                log_error("proxy hostname is empty or too long");
+                return invalid_argument;
+            }
+            (void)memcpy(proxy_hostname, span_get_ptr(client->proxy.hostname), proxy_hostname_length);
+            proxy_hostname[proxy_hostname_length] = '\0';
+            connect_hostname = proxy_hostname;
+            connect_port     = client->proxy.port;
+        }
+
+        if (span_is_empty(span_copy_int32(span_from_memory(port_string), connect_port, NULL)))
         {
             log_error("span_copy_int32 failed");
             return error;
         }
 
-        if ((rv = getaddrinfo((const char * restrict)span_get_ptr(client->remote.hostname), (const char * restrict)port_string, &hints, &servinfo)) != 0)
+        if ((rv = getaddrinfo(connect_hostname, (const char * restrict)port_string, &hints, &servinfo)) != 0)
         {
             log_error("getaddrinfo: %s", socket_gai_strerror(rv));
             return error;
@@ -1154,6 +1489,26 @@ result_t socket_connect(socket_t *client)
             {
                 close(sockfd);
                 continue;
+            }
+
+            /* The tunnel is part of reaching this candidate: a proxy address
+             * that cannot provide one is skipped like one that cannot be
+             * connected to. invalid_argument is a configuration problem no
+             * other address will fix. */
+            if (through_proxy)
+            {
+                result_t tunnel_result = proxy_open_tunnel(client, sockfd);
+                if (tunnel_result != ok)
+                {
+                    close(sockfd);
+                    result = error;
+                    if (tunnel_result == invalid_argument)
+                    {
+                        result = invalid_argument;
+                        break;
+                    }
+                    continue;
+                }
             }
             client->sd = sockfd;
 
@@ -1510,6 +1865,12 @@ result_t socket_connect_nb_begin(socket_t* client)
 {
     if (client == NULL || client->role == socket_role_server)
     {
+        return invalid_argument;
+    }
+
+    if (socket_proxy_is_configured(client))
+    {
+        log_error("socket_connect_nb_begin: a proxy is configured; only socket_connect supports one");
         return invalid_argument;
     }
 
